@@ -30,29 +30,25 @@ static void ngx_http_mustach_handler_internal(ngx_http_request_t *r) {
     (void) ngx_cpystrn(templatec, template.data, template.len + 1);
     struct json_object *object = json_tokener_parse(jsonc);
     if (!object) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!json_tokener_parse"); return; }
-    ngx_pool_cleanup_t *cleanup = ngx_pool_cleanup_add(r->pool, 0);
-    if (!cleanup) { json_object_put(object); ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!ngx_pool_cleanup_add"); return; }
-    cleanup->handler = (ngx_pool_cleanup_pt)json_object_put;
-    cleanup->data = object;
     ngx_str_t output = ngx_null_string;
     FILE *out = open_memstream((char **)&output.data, &output.len);
-    if (!out) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!open_memstream"); return; }
-    cleanup = ngx_pool_cleanup_add(r->pool, 0);
-    if (!cleanup) { free(output.data); ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!ngx_pool_cleanup_add"); return; }
-    cleanup->handler = (ngx_pool_cleanup_pt)free;
-    cleanup->data = output.data;
-    if (fmustach_json_c(templatec, object, out)) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "fmustach_json_c"); return; }
+    if (!out) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!open_memstream"); goto json_object_put; }
+    if (fmustach_json_c(templatec, object, out)) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "fmustach_json_c"); goto free; }
     fclose(out);
-    if (!output.len) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!output.len"); return; }
+    if (!output.len) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!output.len"); goto free; }
     ngx_buf_t *buf = ngx_create_temp_buf(r->pool, output.len);
-    if (!buf) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!ngx_create_temp_buf"); return; }
+    if (!buf) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!ngx_create_temp_buf"); goto free; }
     buf->memory = 1;
     buf->last = ngx_copy(buf->last, output.data, output.len);
-    if (buf->last != buf->end) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "buf->last != buf->end"); return; }
+    if (buf->last != buf->end) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "buf->last != buf->end"); goto free; }
     buf->last_buf = (r == r->main) ? 1 : 0;
     buf->last_in_chain = 1;
     ngx_http_mustach_context_t *context = ngx_http_get_module_ctx(r, ngx_http_mustach_module);
     context->buf = buf;
+free:
+    free(output.data);
+json_object_put:
+    json_object_put(object);
 }
 
 static void ngx_http_mustach_task_handler(void *data, ngx_log_t *log) {
