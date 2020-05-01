@@ -23,8 +23,8 @@ static ngx_int_t ngx_http_mustach_handler(ngx_http_request_t *r) {
 }
 
 static char *ngx_http_set_complex_value_slot_my(ngx_conf_t *cf, ngx_command_t *cmd, void *conf) {
-    ngx_http_core_loc_conf_t *clcf = ngx_http_conf_get_module_loc_conf(cf, ngx_http_core_module);
-    if (!clcf->handler) clcf->handler = ngx_http_mustach_handler;
+    ngx_http_core_loc_conf_t *core_loc_conf = ngx_http_conf_get_module_loc_conf(cf, ngx_http_core_module);
+    if (!core_loc_conf->handler) core_loc_conf->handler = ngx_http_mustach_handler;
     return ngx_http_set_complex_value_slot(cf, cmd, conf);
 }
 
