@@ -5,10 +5,6 @@
 #include <mustach/mustach-json-c.h>
 
 typedef struct {
-    ngx_buf_t *buf;
-} ngx_http_mustach_context_t;
-
-typedef struct {
     ngx_http_complex_value_t *json;
     ngx_http_complex_value_t *template;
 } ngx_http_mustach_location_conf_t;
@@ -18,107 +14,7 @@ ngx_module_t ngx_http_mustach_module;
 static ngx_http_output_header_filter_pt ngx_http_next_header_filter;
 static ngx_http_output_body_filter_pt ngx_http_next_body_filter;
 
-static void ngx_http_mustach_handler_internal(ngx_http_request_t *r) {
-    ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "%s", __func__);
-    ngx_http_mustach_location_conf_t *location_conf = ngx_http_get_module_loc_conf(r, ngx_http_mustach_module);
-    ngx_str_t json;
-    if (ngx_http_complex_value(r, location_conf->json, &json) != NGX_OK) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_http_complex_value != NGX_OK"); return; }
-    u_char *jsonc = ngx_pnalloc(r->pool, json.len + 1);
-    if (!jsonc) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!ngx_pnalloc"); return; }
-    (void) ngx_cpystrn(jsonc, json.data, json.len + 1);
-    ngx_str_t template;
-    if (ngx_http_complex_value(r, location_conf->template, &template) != NGX_OK) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_http_complex_value != NGX_OK"); return; }
-    u_char *templatec = ngx_pnalloc(r->pool, template.len + 1);
-    if (!templatec) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!ngx_pnalloc"); return; }
-    (void) ngx_cpystrn(templatec, template.data, template.len + 1);
-    struct json_object *object = json_tokener_parse(jsonc);
-    if (!object) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!json_tokener_parse"); return; }
-    ngx_str_t output = ngx_null_string;
-    FILE *out = open_memstream((char **)&output.data, &output.len);
-    if (!out) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!open_memstream"); goto json_object_put; }
-    if (fmustach_json_c(templatec, object, out)) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "fmustach_json_c"); goto free; }
-    fclose(out);
-    if (!output.len) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!output.len"); goto free; }
-    ngx_buf_t *buf = ngx_create_temp_buf(r->pool, output.len);
-    if (!buf) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!ngx_create_temp_buf"); goto free; }
-    buf->memory = 1;
-    buf->last = ngx_copy(buf->last, output.data, output.len);
-    if (buf->last != buf->end) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "buf->last != buf->end"); goto free; }
-    buf->last_buf = (r == r->main) ? 1 : 0;
-    buf->last_in_chain = 1;
-    ngx_http_mustach_context_t *context = ngx_http_get_module_ctx(r, ngx_http_mustach_module);
-    context->buf = buf;
-free:
-    free(output.data);
-json_object_put:
-    json_object_put(object);
-}
-
-static void ngx_http_mustach_task_handler(void *data, ngx_log_t *log) {
-    ngx_http_request_t *r = data;
-    ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "%s", __func__);
-    ngx_http_mustach_handler_internal(r);
-}
-
-static ngx_int_t ngx_http_mustach_handler_internal2(ngx_http_request_t *r) {
-    ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "%s", __func__);
-    ngx_int_t rc = NGX_HTTP_INTERNAL_SERVER_ERROR;
-    ngx_http_mustach_context_t *context = ngx_http_get_module_ctx(r, ngx_http_mustach_module);
-    if (!context->buf) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!context->buf"); return rc; }
-    ngx_chain_t *chain = ngx_alloc_chain_link(r->pool);
-    if (!chain) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!ngx_alloc_chain_link"); return rc; }
-    chain->buf = context->buf;
-    chain->next = NULL;
-    r->headers_out.status = NGX_HTTP_OK;
-    r->headers_out.content_length_n = context->buf->end - context->buf->pos;
-    rc = ngx_http_send_header(r);
-    ngx_http_weak_etag(r);
-    if (rc == NGX_ERROR || rc > NGX_OK || r->header_only); else rc = ngx_http_output_filter(r, chain);
-    return rc;
-}
-
-static void ngx_http_mustach_event_handler(ngx_event_t *ev) {
-    ngx_http_request_t *r = ev->data;
-    ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "%s", __func__);
-    ngx_http_finalize_request(r, ngx_http_mustach_handler_internal2(r));
-}
-
-static ngx_int_t ngx_http_mustach_handler(ngx_http_request_t *r) {
-    ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "%s", __func__);
-    if (!(r->method & (NGX_HTTP_GET|NGX_HTTP_HEAD))) return NGX_HTTP_NOT_ALLOWED;
-    ngx_int_t rc = ngx_http_discard_request_body(r);
-    if (rc != NGX_OK && rc != NGX_AGAIN) return rc;
-    ngx_http_mustach_context_t *context = ngx_pcalloc(r->pool, sizeof(ngx_http_mustach_context_t));
-    ngx_http_set_ctx(r, context, ngx_http_mustach_module);
-    ngx_http_core_loc_conf_t *core_loc_conf = ngx_http_get_module_loc_conf(r, ngx_http_core_module);
-    if (core_loc_conf->thread_pool) {
-        ngx_thread_task_t *task = ngx_thread_task_alloc(r->pool, 0);
-        if (!task) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!ngx_thread_task_alloc"); return NGX_ERROR; }
-        task->handler = ngx_http_mustach_task_handler;
-        task->ctx = r;
-        task->event.handler = ngx_http_mustach_event_handler;
-        task->event.data = r;
-        if (ngx_thread_task_post(core_loc_conf->thread_pool, task) != NGX_OK) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_thread_task_post != NGX_OK"); return NGX_ERROR; }
-        r->main->count++;
-        return NGX_OK;
-    }
-    ngx_http_mustach_handler_internal(r);
-    return ngx_http_mustach_handler_internal2(r);
-}
-
-static char *ngx_http_mustach_conf(ngx_conf_t *cf, ngx_command_t *cmd, void *conf) {
-    ngx_http_core_loc_conf_t *clcf = ngx_http_conf_get_module_loc_conf(cf, ngx_http_core_module);
-    clcf->handler = ngx_http_mustach_handler;
-    return NGX_CONF_OK;
-}
-
 static ngx_command_t ngx_http_mustach_commands[] = {
-  { .name = ngx_string("mustach"),
-    .type = NGX_HTTP_LOC_CONF|NGX_CONF_NOARGS,
-    .set = ngx_http_mustach_conf,
-    .conf = NGX_HTTP_LOC_CONF_OFFSET,
-    .offset = 0,
-    .post = NULL },
   { .name = ngx_string("mustach_json"),
     .type = NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_CONF_TAKE1,
     .set = ngx_http_set_complex_value_slot,
@@ -159,12 +55,9 @@ static ngx_int_t ngx_http_mustach_header_filter(ngx_http_request_t *r) {
     return ngx_http_next_header_filter(r);
 }
 
-static ngx_int_t ngx_http_mustach_body_filter(ngx_http_request_t *r, ngx_chain_t *in) {
+static ngx_int_t ngx_http_mustach_body_filter_internal(ngx_http_request_t *r, ngx_chain_t *in) {
     ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "%s", __func__);
-    if (in) return ngx_http_next_body_filter(r, in);
     ngx_http_mustach_location_conf_t *location_conf = ngx_http_get_module_loc_conf(r, ngx_http_mustach_module);
-    if (!location_conf->json) ngx_http_next_body_filter(r, in);
-    if (!location_conf->template) ngx_http_next_body_filter(r, in);
     ngx_int_t rc = NGX_ERROR;
     ngx_str_t json;
     if (ngx_http_complex_value(r, location_conf->json, &json) != NGX_OK) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_http_complex_value != NGX_OK"); goto ret; }
@@ -201,6 +94,66 @@ json_object_put:
     json_object_put(object);
 ret:
     return rc;
+}
+
+#if (NGX_THREADS)
+static void ngx_http_mustach_thread_event_handler(ngx_event_t *ev) {
+    ngx_http_request_t *r = ev->data;
+    ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "%s", __func__);
+    ngx_connection_t *c = r->connection;
+    r->main->blocked--;
+    r->aio = 0;
+    if (r->done) c->write->handler(c->write); else {
+        r->write_event_handler(r);
+        ngx_http_run_posted_requests(c);
+    }
+}
+
+static ngx_int_t ngx_http_mustach_thread_handler(ngx_thread_task_t *task, ngx_file_t *file) {
+    ngx_http_request_t *r = file->thread_ctx;
+    ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "%s", __func__);
+    ngx_http_core_loc_conf_t *core_loc_conf = ngx_http_get_module_loc_conf(r, ngx_http_core_module);
+    ngx_thread_pool_t *thread_pool = core_loc_conf->thread_pool;
+    if (!thread_pool) {
+        ngx_str_t name;
+        if (ngx_http_complex_value(r, core_loc_conf->thread_pool_value, &name) != NGX_OK) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_http_complex_value != NGX_OK"); return NGX_ERROR; }
+        if (!(thread_pool = ngx_thread_pool_get((ngx_cycle_t *)ngx_cycle, &name))) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "thread pool \"%V\" not found", &name); return NGX_ERROR; }
+    }
+    task->event.data = r;
+    task->event.handler = ngx_http_mustach_thread_event_handler;
+    if (ngx_thread_task_post(thread_pool, task) != NGX_OK) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_thread_task_post != NGX_OK"); return NGX_ERROR; }
+    r->main->blocked++;
+    r->aio = 1;
+    ngx_output_chain_ctx_t *ctx = ngx_http_get_module_ctx(r, ngx_http_mustach_module);
+    ctx->aio = 1;
+    return NGX_OK;
+}
+#endif
+
+static ngx_int_t ngx_http_mustach_body_filter(ngx_http_request_t *r, ngx_chain_t *in) {
+    ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "%s", __func__);
+    if (in) return ngx_http_next_body_filter(r, in);
+    ngx_http_mustach_location_conf_t *location_conf = ngx_http_get_module_loc_conf(r, ngx_http_mustach_module);
+    if (!location_conf->json) ngx_http_next_body_filter(r, in);
+    if (!location_conf->template) ngx_http_next_body_filter(r, in);
+    ngx_http_core_loc_conf_t *core_loc_conf = ngx_http_get_module_loc_conf(r, ngx_http_core_module);
+#if (NGX_THREADS)
+    if (core_loc_conf->aio != NGX_HTTP_AIO_THREADS)
+#endif
+    return ngx_http_mustach_body_filter_internal(r, in);
+#if (NGX_THREADS)
+    ngx_output_chain_ctx_t *ctx = ngx_http_get_module_ctx(r, ngx_http_mustach_module);
+    if (!ctx) {
+        if (!(ctx = ngx_pcalloc(r->pool, sizeof(ngx_output_chain_ctx_t)))) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!ngx_pcalloc"); return NGX_ERROR; }
+        ngx_http_set_ctx(r, ctx, ngx_http_mustach_module);
+        ctx->pool = r->pool;
+        ctx->output_filter = (ngx_output_chain_filter_pt)ngx_http_mustach_body_filter_internal;
+        ctx->filter_ctx = r;
+        ctx->thread_handler = ngx_http_mustach_thread_handler;
+    }
+    ctx->aio = r->aio;
+    return ngx_output_chain(ctx, in);
+#endif
 }
 
 static ngx_int_t ngx_http_mustach_postconfiguration(ngx_conf_t *cf) {
