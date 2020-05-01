@@ -14,7 +14,27 @@ ngx_module_t ngx_http_mustach_module;
 static ngx_http_output_header_filter_pt ngx_http_next_header_filter;
 static ngx_http_output_body_filter_pt ngx_http_next_body_filter;
 
+static ngx_int_t ngx_http_mustach_handler(ngx_http_request_t *r) {
+    ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "%s", __func__);
+    r->headers_out.status = NGX_HTTP_OK;
+    ngx_int_t rc = ngx_http_send_header(r);
+    if (rc == NGX_ERROR || rc > NGX_OK || r->header_only); else rc = ngx_http_output_filter(r, NULL);
+    return rc;
+}
+
+static char *ngx_http_mustach_conf(ngx_conf_t *cf, ngx_command_t *cmd, void *conf) {
+    ngx_http_core_loc_conf_t *clcf = ngx_http_conf_get_module_loc_conf(cf, ngx_http_core_module);
+    if (!clcf->handler) clcf->handler = ngx_http_mustach_handler;
+    return NGX_CONF_OK;
+}
+
 static ngx_command_t ngx_http_mustach_commands[] = {
+  { .name = ngx_string("mustach"),
+    .type = NGX_HTTP_LOC_CONF|NGX_CONF_NOARGS,
+    .set = ngx_http_mustach_conf,
+    .conf = NGX_HTTP_LOC_CONF_OFFSET,
+    .offset = 0,
+    .post = NULL },
   { .name = ngx_string("mustach_json"),
     .type = NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_CONF_TAKE1,
     .set = ngx_http_set_complex_value_slot,
