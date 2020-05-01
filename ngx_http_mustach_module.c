@@ -15,6 +15,9 @@ typedef struct {
 
 ngx_module_t ngx_http_mustach_module;
 
+static ngx_http_output_header_filter_pt ngx_http_next_header_filter;
+static ngx_http_output_body_filter_pt ngx_http_next_body_filter;
+
 static void ngx_http_mustach_handler_internal(ngx_http_request_t *r) {
     ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "%s", __func__);
     ngx_http_mustach_location_conf_t *location_conf = ngx_http_get_module_loc_conf(r, ngx_http_mustach_module);
@@ -145,9 +148,72 @@ static char *ngx_http_mustach_merge_loc_conf(ngx_conf_t *cf, void *parent, void 
     return NGX_CONF_OK;
 }
 
+static ngx_int_t ngx_http_mustach_header_filter(ngx_http_request_t *r) {
+    ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "%s", __func__);
+    ngx_http_mustach_location_conf_t *location_conf = ngx_http_get_module_loc_conf(r, ngx_http_mustach_module);
+    if (!location_conf->json) return ngx_http_next_header_filter(r);
+    if (!location_conf->template) return ngx_http_next_header_filter(r);
+    ngx_http_clear_content_length(r);
+    ngx_http_clear_accept_ranges(r);
+    ngx_http_weak_etag(r);
+    return ngx_http_next_header_filter(r);
+}
+
+static ngx_int_t ngx_http_mustach_body_filter(ngx_http_request_t *r, ngx_chain_t *in) {
+    ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "%s", __func__);
+    if (in) return ngx_http_next_body_filter(r, in);
+    ngx_http_mustach_location_conf_t *location_conf = ngx_http_get_module_loc_conf(r, ngx_http_mustach_module);
+    if (!location_conf->json) ngx_http_next_body_filter(r, in);
+    if (!location_conf->template) ngx_http_next_body_filter(r, in);
+    ngx_int_t rc = NGX_ERROR;
+    ngx_str_t json;
+    if (ngx_http_complex_value(r, location_conf->json, &json) != NGX_OK) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_http_complex_value != NGX_OK"); goto ret; }
+    u_char *jsonc = ngx_pnalloc(r->pool, json.len + 1);
+    if (!jsonc) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!ngx_pnalloc"); goto ret; }
+    (void) ngx_cpystrn(jsonc, json.data, json.len + 1);
+    ngx_str_t template;
+    if (ngx_http_complex_value(r, location_conf->template, &template) != NGX_OK) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_http_complex_value != NGX_OK"); goto ret; }
+    u_char *templatec = ngx_pnalloc(r->pool, template.len + 1);
+    if (!templatec) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!ngx_pnalloc"); goto ret; }
+    (void) ngx_cpystrn(templatec, template.data, template.len + 1);
+    struct json_object *object = json_tokener_parse(jsonc);
+    if (!object) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!json_tokener_parse"); goto ret; }
+    ngx_str_t output = ngx_null_string;
+    FILE *out = open_memstream((char **)&output.data, &output.len);
+    if (!out) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!open_memstream"); goto json_object_put; }
+    if (fmustach_json_c(templatec, object, out)) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "fmustach_json_c"); goto free; }
+    fclose(out);
+    if (!output.len) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!output.len"); goto free; }
+    ngx_chain_t *chain = ngx_alloc_chain_link(r->pool);
+    if (!chain) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!ngx_alloc_chain_link"); goto free; }
+    chain->next = NULL;
+    ngx_buf_t *buf = chain->buf = ngx_create_temp_buf(r->pool, output.len);
+    if (!buf) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!ngx_create_temp_buf"); goto free; }
+    buf->memory = 1;
+    buf->last = ngx_copy(buf->last, output.data, output.len);
+    if (buf->last != buf->end) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "buf->last != buf->end"); goto free; }
+    buf->last_buf = (r == r->main) ? 1 : 0;
+    buf->last_in_chain = 1;
+    rc = ngx_http_next_body_filter(r, chain);
+free:
+    free(output.data);
+json_object_put:
+    json_object_put(object);
+ret:
+    return rc;
+}
+
+static ngx_int_t ngx_http_mustach_postconfiguration(ngx_conf_t *cf) {
+    ngx_http_next_header_filter = ngx_http_top_header_filter;
+    ngx_http_top_header_filter = ngx_http_mustach_header_filter;
+    ngx_http_next_body_filter = ngx_http_top_body_filter;
+    ngx_http_top_body_filter = ngx_http_mustach_body_filter;
+    return NGX_OK;
+}
+
 static ngx_http_module_t ngx_http_mustach_ctx = {
     .preconfiguration = NULL,
-    .postconfiguration = NULL,
+    .postconfiguration = ngx_http_mustach_postconfiguration,
     .create_main_conf = NULL,
     .init_main_conf = NULL,
     .create_srv_conf = NULL,
