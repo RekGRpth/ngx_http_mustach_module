@@ -83,6 +83,10 @@ static ngx_int_t ngx_http_mustach_header_filter(ngx_http_request_t *r) {
     ngx_http_clear_accept_ranges(r);
     ngx_http_weak_etag(r);
     if (location_conf->type && ngx_http_complex_value(r, location_conf->type, &r->headers_out.content_type) != NGX_OK) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_http_complex_value != NGX_OK"); return NGX_ERROR; }
+    if (!r->headers_out.content_type.data) {
+        ngx_http_core_loc_conf_t *core = ngx_http_get_module_loc_conf(r, ngx_http_core_module);
+        r->headers_out.content_type = core->default_type;
+    }
     r->headers_out.content_type_len = r->headers_out.content_type.len;
     return ngx_http_next_header_filter(r);
 }
