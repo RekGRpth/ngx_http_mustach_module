@@ -121,8 +121,9 @@ static ngx_int_t ngx_http_mustach_body_filter_internal(ngx_http_request_t *r, ng
     u_char *templatec = ngx_pnalloc(r->pool, template.len + 1);
     if (!templatec) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!ngx_pnalloc"); goto ret; }
     (void) ngx_cpystrn(templatec, template.data, template.len + 1);
-    struct json_object *object = json_tokener_parse(jsonc);
-    if (!object) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!json_tokener_parse"); goto ret; }
+    enum json_tokener_error error;
+    struct json_object *object = json_tokener_parse_verbose(jsonc, &error);
+    if (!object) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!json_tokener_parse = %s", json_tokener_error_desc(error)); goto ret; }
     ngx_str_t output = ngx_null_string;
     FILE *out = open_memstream((char **)&output.data, &output.len);
     if (!out) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!open_memstream"); goto json_object_put; }
