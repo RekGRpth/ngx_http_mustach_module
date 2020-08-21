@@ -103,6 +103,7 @@ static ngx_int_t ngx_http_mustach_body_filter_internal(ngx_http_request_t *r, ng
             if (!ngx_buf_in_memory(cl->buf)) continue;
             len += cl->buf->last - cl->buf->pos;
         }
+        if (!len) return ngx_http_next_body_filter(r, in);
         if (!(jsonc = ngx_pnalloc(r->pool, len + 1))) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!ngx_pnalloc"); goto ret; }
         u_char *p = jsonc;
         for (ngx_chain_t *cl = in; cl; cl = cl->next) {
