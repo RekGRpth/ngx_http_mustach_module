@@ -154,8 +154,12 @@ static ngx_int_t ngx_http_mustach_body_filter_internal(ngx_http_request_t *r, ng
     buf->memory = 1;
     buf->last = ngx_copy(buf->last, output.data, output.len);
     if (buf->last != buf->end) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "buf->last != buf->end"); goto free; }
-    buf->last_buf = (r == r->main) ? 1 : 0;
-    buf->last_in_chain = 1;
+    if (r == r->main && !r->post_action) {
+        buf->last_buf = 1;
+    } else {
+        buf->sync = 1;
+        buf->last_in_chain = 1;
+    }
     rc = ngx_http_next_body_filter(r, chain);
 free:
     free(output.data);
