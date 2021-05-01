@@ -139,19 +139,16 @@ static ngx_int_t ngx_http_mustach_body_filter_internal(ngx_http_request_t *r, ng
     } else { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!in && !json"); goto ret; }
     ngx_str_t template;
     if (ngx_http_complex_value(r, location_conf->template, &template) != NGX_OK) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_http_complex_value != NGX_OK"); goto ret; }
-    u_char *templatec = ngx_pnalloc(r->pool, template.len + 1);
-    if (!templatec) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!ngx_pnalloc"); goto ret; }
-    (void) ngx_cpystrn(templatec, template.data, template.len + 1);
     ngx_str_t output = ngx_null_string;
     FILE *out = open_memstream((char **)&output.data, &output.len);
     if (!out) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!open_memstream"); goto ret; }
-    int (*ngx_http_mustach_process)(ngx_http_request_t *r, const char *template, const char *data, size_t len, FILE *file);
+    int (*ngx_http_mustach_process)(ngx_http_request_t *r, const char *template, size_t length, const char *data, size_t len, FILE *file);
     switch (location_conf->type) {
         case MUSTACH_CJSON: ngx_http_mustach_process = ngx_http_mustach_process_cjson;
         case MUSTACH_JANSSON: ngx_http_mustach_process = ngx_http_mustach_process_jansson;
         case MUSTACH_JSON_C: ngx_http_mustach_process = ngx_http_mustach_process_json_c;
     }
-    switch (ngx_http_mustach_process(r, templatec, json.data, json.len, out)) {
+    switch (ngx_http_mustach_process(r, template.data, template.len, json.data, json.len, out)) {
         case MUSTACH_OK: break;
         case MUSTACH_ERROR_SYSTEM: ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "MUSTACH_ERROR_SYSTEM"); goto free;
         case MUSTACH_ERROR_UNEXPECTED_END: ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "MUSTACH_ERROR_UNEXPECTED_END"); goto free;
