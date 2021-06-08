@@ -144,9 +144,9 @@ static ngx_int_t ngx_http_mustach_body_filter_internal(ngx_http_request_t *r, ng
     if (!out) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!open_memstream"); goto ret; }
     int (*ngx_http_mustach_process)(ngx_http_request_t *r, const char *template, size_t length, const char *data, size_t len, FILE *file);
     switch (location_conf->type) {
-        case MUSTACH_CJSON: ngx_http_mustach_process = ngx_http_mustach_process_cjson;
-        case MUSTACH_JANSSON: ngx_http_mustach_process = ngx_http_mustach_process_jansson;
-        case MUSTACH_JSON_C: ngx_http_mustach_process = ngx_http_mustach_process_json_c;
+        case MUSTACH_CJSON: ngx_http_mustach_process = ngx_http_mustach_process_cjson; break;
+        case MUSTACH_JANSSON: ngx_http_mustach_process = ngx_http_mustach_process_jansson; break;
+        case MUSTACH_JSON_C: ngx_http_mustach_process = ngx_http_mustach_process_json_c; break;
     }
     switch (ngx_http_mustach_process(r, (const char *)template.data, template.len, (const char *)json.data, json.len, out)) {
         case MUSTACH_OK: break;
