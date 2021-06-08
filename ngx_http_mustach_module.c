@@ -148,7 +148,7 @@ static ngx_int_t ngx_http_mustach_body_filter_internal(ngx_http_request_t *r, ng
         case MUSTACH_JANSSON: ngx_http_mustach_process = ngx_http_mustach_process_jansson;
         case MUSTACH_JSON_C: ngx_http_mustach_process = ngx_http_mustach_process_json_c;
     }
-    switch (ngx_http_mustach_process(r, template.data, template.len, json.data, json.len, out)) {
+    switch (ngx_http_mustach_process(r, (const char *)template.data, template.len, (const char *)json.data, json.len, out)) {
         case MUSTACH_OK: break;
         case MUSTACH_ERROR_SYSTEM: ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "MUSTACH_ERROR_SYSTEM"); goto free;
         case MUSTACH_ERROR_UNEXPECTED_END: ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "MUSTACH_ERROR_UNEXPECTED_END"); goto free;
