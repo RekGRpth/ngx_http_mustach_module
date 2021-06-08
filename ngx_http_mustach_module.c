@@ -147,6 +147,7 @@ static ngx_int_t ngx_http_mustach_body_filter_internal(ngx_http_request_t *r, ng
         case MUSTACH_CJSON: ngx_http_mustach_process = ngx_http_mustach_process_cjson; break;
         case MUSTACH_JANSSON: ngx_http_mustach_process = ngx_http_mustach_process_jansson; break;
         case MUSTACH_JSON_C: ngx_http_mustach_process = ngx_http_mustach_process_json_c; break;
+        default: ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "location_conf->type = %i", location_conf->type); goto ret;
     }
     switch (ngx_http_mustach_process(r, (const char *)template.data, template.len, (const char *)json.data, json.len, out)) {
         case MUSTACH_OK: break;
