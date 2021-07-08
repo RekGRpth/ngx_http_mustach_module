@@ -93,10 +93,10 @@ static char *ngx_http_mustach_merge_loc_conf(ngx_conf_t *cf, void *parent, void 
 }
 
 static ngx_int_t ngx_http_mustach_header_filter(ngx_http_request_t *r) {
-    ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "%s", __func__);
     ngx_http_mustach_location_conf_t *location_conf = ngx_http_get_module_loc_conf(r, ngx_http_mustach_module);
     if (!location_conf->json && !(r->headers_out.content_type.len >= sizeof("application/json") - 1 && !ngx_strncasecmp(r->headers_out.content_type.data, (u_char *)"application/json", sizeof("application/json") - 1))) return ngx_http_next_header_filter(r);
     if (!location_conf->template) return ngx_http_next_header_filter(r);
+    ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "%s", __func__);
     ngx_http_mustach_context_t *context = ngx_pcalloc(r->pool, sizeof(ngx_http_mustach_context_t));
     if (!context) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!ngx_pcalloc"); return NGX_ERROR; }
     ngx_http_set_ctx(r, context, ngx_http_mustach_module);
@@ -220,12 +220,12 @@ static ngx_int_t ngx_http_mustach_thread_handler(ngx_thread_task_t *task, ngx_fi
 #endif
 
 static ngx_int_t ngx_http_mustach_body_filter(ngx_http_request_t *r, ngx_chain_t *in) {
-    ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "%s", __func__);
     ngx_http_mustach_location_conf_t *location_conf = ngx_http_get_module_loc_conf(r, ngx_http_mustach_module);
     ngx_http_mustach_context_t *context = ngx_http_get_module_ctx(r, ngx_http_mustach_module);
     if (!context) return ngx_http_next_body_filter(r, in);
     if (!location_conf->json && !(in && context->content.len >= sizeof("application/json") - 1 && !ngx_strncasecmp(context->content.data, (u_char *)"application/json", sizeof("application/json") - 1))) return ngx_http_next_body_filter(r, in);
     if (!location_conf->template) return ngx_http_next_body_filter(r, in);
+    ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "%s", __func__);
     ngx_http_core_loc_conf_t *core_loc_conf = ngx_http_get_module_loc_conf(r, ngx_http_core_module);
 #if (NGX_THREADS)
     if (core_loc_conf->aio != NGX_HTTP_AIO_THREADS)
