@@ -19,7 +19,7 @@ typedef struct {
     ngx_http_complex_value_t *json;
     ngx_http_complex_value_t *template;
     ngx_uint_t type;
-} ngx_http_mustach_location_conf_t;
+} ngx_http_mustach_location_t;
 
 ngx_module_t ngx_http_mustach_module;
 
@@ -52,39 +52,39 @@ static ngx_command_t ngx_http_mustach_commands[] = {
     .type = NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_CONF_TAKE1,
     .set = ngx_http_set_complex_value_slot,
     .conf = NGX_HTTP_LOC_CONF_OFFSET,
-    .offset = offsetof(ngx_http_mustach_location_conf_t, content),
+    .offset = offsetof(ngx_http_mustach_location_t, content),
     .post = NULL },
   { .name = ngx_string("mustach_json"),
     .type = NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_CONF_TAKE1,
     .set = ngx_http_set_complex_value_slot,
     .conf = NGX_HTTP_LOC_CONF_OFFSET,
-    .offset = offsetof(ngx_http_mustach_location_conf_t, json),
+    .offset = offsetof(ngx_http_mustach_location_t, json),
     .post = NULL },
   { .name = ngx_string("mustach_template"),
     .type = NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_CONF_TAKE1,
     .set = ngx_http_set_complex_value_slot_my,
     .conf = NGX_HTTP_LOC_CONF_OFFSET,
-    .offset = offsetof(ngx_http_mustach_location_conf_t, template),
+    .offset = offsetof(ngx_http_mustach_location_t, template),
     .post = NULL },
   { .name = ngx_string("mustach_type"),
     .type = NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_CONF_TAKE1,
     .set = ngx_conf_set_enum_slot,
     .conf = NGX_HTTP_LOC_CONF_OFFSET,
-    .offset = offsetof(ngx_http_mustach_location_conf_t, type),
+    .offset = offsetof(ngx_http_mustach_location_t, type),
     .post = &ngx_http_mustach_type },
     ngx_null_command
 };
 
 static void *ngx_http_mustach_create_loc_conf(ngx_conf_t *cf) {
-    ngx_http_mustach_location_conf_t *location_conf = ngx_pcalloc(cf->pool, sizeof(ngx_http_mustach_location_conf_t));
-    if (!location_conf) return NULL;
-    location_conf->type = NGX_CONF_UNSET_UINT;
-    return location_conf;
+    ngx_http_mustach_location_t *location = ngx_pcalloc(cf->pool, sizeof(*location));
+    if (!location) return NULL;
+    location->type = NGX_CONF_UNSET_UINT;
+    return location;
 }
 
 static char *ngx_http_mustach_merge_loc_conf(ngx_conf_t *cf, void *parent, void *child) {
-    ngx_http_mustach_location_conf_t *prev = parent;
-    ngx_http_mustach_location_conf_t *conf = child;
+    ngx_http_mustach_location_t *prev = parent;
+    ngx_http_mustach_location_t *conf = child;
     if (!conf->content) conf->content = prev->content;
     if (!conf->json) conf->json = prev->json;
     if (!conf->template) conf->template = prev->template;
@@ -93,18 +93,18 @@ static char *ngx_http_mustach_merge_loc_conf(ngx_conf_t *cf, void *parent, void 
 }
 
 static ngx_int_t ngx_http_mustach_header_filter(ngx_http_request_t *r) {
-    ngx_http_mustach_location_conf_t *location_conf = ngx_http_get_module_loc_conf(r, ngx_http_mustach_module);
-    if (!location_conf->json && !(r->headers_out.content_type.len >= sizeof("application/json") - 1 && !ngx_strncasecmp(r->headers_out.content_type.data, (u_char *)"application/json", sizeof("application/json") - 1))) return ngx_http_next_header_filter(r);
-    if (!location_conf->template) return ngx_http_next_header_filter(r);
+    ngx_http_mustach_location_t *location = ngx_http_get_module_loc_conf(r, ngx_http_mustach_module);
+    if (!location->json && !(r->headers_out.content_type.len >= sizeof("application/json") - 1 && !ngx_strncasecmp(r->headers_out.content_type.data, (u_char *)"application/json", sizeof("application/json") - 1))) return ngx_http_next_header_filter(r);
+    if (!location->template) return ngx_http_next_header_filter(r);
     ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "%s", __func__);
-    ngx_http_mustach_context_t *context = ngx_pcalloc(r->pool, sizeof(ngx_http_mustach_context_t));
+    ngx_http_mustach_context_t *context = ngx_pcalloc(r->pool, sizeof(*context));
     if (!context) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!ngx_pcalloc"); return NGX_ERROR; }
     ngx_http_set_ctx(r, context, ngx_http_mustach_module);
     context->content = r->headers_out.content_type;
     ngx_http_clear_content_length(r);
     ngx_http_clear_accept_ranges(r);
     ngx_http_weak_etag(r);
-    if (location_conf->content && ngx_http_complex_value(r, location_conf->content, &r->headers_out.content_type) != NGX_OK) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_http_complex_value != NGX_OK"); return NGX_ERROR; }
+    if (location->content && ngx_http_complex_value(r, location->content, &r->headers_out.content_type) != NGX_OK) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_http_complex_value != NGX_OK"); return NGX_ERROR; }
     if (!r->headers_out.content_type.data) {
         ngx_http_core_loc_conf_t *core = ngx_http_get_module_loc_conf(r, ngx_http_core_module);
         r->headers_out.content_type = core->default_type;
@@ -115,7 +115,7 @@ static ngx_int_t ngx_http_mustach_header_filter(ngx_http_request_t *r) {
 
 static ngx_int_t ngx_http_mustach_body_filter_internal(ngx_http_request_t *r, ngx_chain_t *in) {
     ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "%s", __func__);
-    ngx_http_mustach_location_conf_t *location_conf = ngx_http_get_module_loc_conf(r, ngx_http_mustach_module);
+    ngx_http_mustach_location_t *location = ngx_http_get_module_loc_conf(r, ngx_http_mustach_module);
     ngx_int_t rc = NGX_ERROR;
     ngx_str_t json;
     if (in) {
@@ -134,20 +134,20 @@ static ngx_int_t ngx_http_mustach_body_filter_internal(ngx_http_request_t *r, ng
             p = ngx_copy(p, cl->buf->pos, len);
         }
         *p = '\0';
-    } else if (location_conf->json) {
-        if (ngx_http_complex_value(r, location_conf->json, &json) != NGX_OK) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_http_complex_value != NGX_OK"); goto ret; }
+    } else if (location->json) {
+        if (ngx_http_complex_value(r, location->json, &json) != NGX_OK) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_http_complex_value != NGX_OK"); goto ret; }
     } else { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!in && !json"); goto ret; }
     ngx_str_t template;
-    if (ngx_http_complex_value(r, location_conf->template, &template) != NGX_OK) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_http_complex_value != NGX_OK"); goto ret; }
+    if (ngx_http_complex_value(r, location->template, &template) != NGX_OK) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_http_complex_value != NGX_OK"); goto ret; }
     ngx_str_t output = ngx_null_string;
     FILE *out = open_memstream((char **)&output.data, &output.len);
     if (!out) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!open_memstream"); goto ret; }
     int (*ngx_http_mustach_process)(ngx_http_request_t *r, const char *template, size_t length, const char *data, size_t len, FILE *file);
-    switch (location_conf->type) {
+    switch (location->type) {
         case MUSTACH_CJSON: ngx_http_mustach_process = ngx_http_mustach_process_cjson; break;
         case MUSTACH_JANSSON: ngx_http_mustach_process = ngx_http_mustach_process_jansson; break;
         case MUSTACH_JSON_C: ngx_http_mustach_process = ngx_http_mustach_process_json_c; break;
-        default: ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "location_conf->type = %i", location_conf->type); goto ret;
+        default: ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "location->type = %i", location->type); goto ret;
     }
     switch (ngx_http_mustach_process(r, (const char *)template.data, template.len, (const char *)json.data, json.len, out)) {
         case MUSTACH_OK: break;
@@ -220,11 +220,11 @@ static ngx_int_t ngx_http_mustach_thread_handler(ngx_thread_task_t *task, ngx_fi
 #endif
 
 static ngx_int_t ngx_http_mustach_body_filter(ngx_http_request_t *r, ngx_chain_t *in) {
-    ngx_http_mustach_location_conf_t *location_conf = ngx_http_get_module_loc_conf(r, ngx_http_mustach_module);
+    ngx_http_mustach_location_t *location = ngx_http_get_module_loc_conf(r, ngx_http_mustach_module);
     ngx_http_mustach_context_t *context = ngx_http_get_module_ctx(r, ngx_http_mustach_module);
     if (!context) return ngx_http_next_body_filter(r, in);
-    if (!location_conf->json && !(in && context->content.len >= sizeof("application/json") - 1 && !ngx_strncasecmp(context->content.data, (u_char *)"application/json", sizeof("application/json") - 1))) return ngx_http_next_body_filter(r, in);
-    if (!location_conf->template) return ngx_http_next_body_filter(r, in);
+    if (!location->json && !(in && context->content.len >= sizeof("application/json") - 1 && !ngx_strncasecmp(context->content.data, (u_char *)"application/json", sizeof("application/json") - 1))) return ngx_http_next_body_filter(r, in);
+    if (!location->template) return ngx_http_next_body_filter(r, in);
     ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "%s", __func__);
     ngx_http_core_loc_conf_t *core_loc_conf = ngx_http_get_module_loc_conf(r, ngx_http_core_module);
 #if (NGX_THREADS)
@@ -232,7 +232,7 @@ static ngx_int_t ngx_http_mustach_body_filter(ngx_http_request_t *r, ngx_chain_t
 #endif
     return ngx_http_mustach_body_filter_internal(r, in);
 #if (NGX_THREADS)
-    ngx_output_chain_ctx_t *ctx = ngx_pcalloc(r->pool, sizeof(ngx_output_chain_ctx_t));
+    ngx_output_chain_ctx_t *ctx = ngx_pcalloc(r->pool, sizeof(*ctx));
     if (!ctx) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!ngx_pcalloc"); return NGX_ERROR; }
     ctx->pool = r->pool;
     ctx->output_filter = (ngx_output_chain_filter_pt)ngx_http_mustach_body_filter_internal;
