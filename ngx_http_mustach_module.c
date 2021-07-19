@@ -28,29 +28,29 @@ static ngx_http_output_body_filter_pt ngx_http_next_body_filter;
 
 static ngx_buf_t *ngx_http_mustach_process(ngx_http_request_t *r, ngx_str_t json) {
     ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "%s", __func__);
-    ngx_buf_t *b = NULL;
     ngx_http_clear_accept_ranges(r);
     ngx_http_clear_content_length(r);
     ngx_http_weak_etag(r);
     ngx_http_mustach_location_t *location = ngx_http_get_module_loc_conf(r, ngx_http_mustach_module);
-    if (location->content && ngx_http_complex_value(r, location->content, &r->headers_out.content_type) != NGX_OK) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_http_complex_value != NGX_OK"); goto error; }
+    if (location->content && ngx_http_complex_value(r, location->content, &r->headers_out.content_type) != NGX_OK) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_http_complex_value != NGX_OK"); return NULL; }
     if (!r->headers_out.content_type.data) {
         ngx_http_core_loc_conf_t *core = ngx_http_get_module_loc_conf(r, ngx_http_core_module);
         r->headers_out.content_type = core->default_type;
     }
     r->headers_out.content_type_len = r->headers_out.content_type.len;
     ngx_str_t template;
-    if (ngx_http_complex_value(r, location->template, &template) != NGX_OK) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_http_complex_value != NGX_OK"); goto error; }
+    if (ngx_http_complex_value(r, location->template, &template) != NGX_OK) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_http_complex_value != NGX_OK"); return NULL; }
     int (*ngx_http_mustach_process)(ngx_http_request_t *r, const char *template, size_t length, const char *data, size_t len, FILE *file);
     switch (location->type) {
         case MUSTACH_CJSON: ngx_http_mustach_process = ngx_http_mustach_process_cjson; break;
         case MUSTACH_JANSSON: ngx_http_mustach_process = ngx_http_mustach_process_jansson; break;
         case MUSTACH_JSON_C: ngx_http_mustach_process = ngx_http_mustach_process_json_c; break;
-        default: ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "location->type = %i", location->type); goto error;
+        default: ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "location->type = %i", location->type); return NULL;
     }
     ngx_str_t output = ngx_null_string;
     FILE *out = open_memstream((char **)&output.data, &output.len);
-    if (!out) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!open_memstream"); goto error; }
+    if (!out) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!open_memstream"); return NULL; }
+    ngx_buf_t *b = NULL;
     switch (ngx_http_mustach_process(r, (const char *)template.data, template.len, (const char *)json.data, json.len, out)) {
         case MUSTACH_OK: break;
         case MUSTACH_ERROR_SYSTEM: ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "MUSTACH_ERROR_SYSTEM"); goto free;
@@ -76,7 +76,6 @@ static ngx_buf_t *ngx_http_mustach_process(ngx_http_request_t *r, ngx_str_t json
     r->headers_out.content_length_n = output.len;
 free:
     free(output.data);
-error:
     return b;
 }
 
