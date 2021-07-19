@@ -178,26 +178,20 @@ static ngx_int_t ngx_http_mustach_body_filter(ngx_http_request_t *r, ngx_chain_t
     }
     fclose(out);
     if (!output.len) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!output.len"); goto free; }
-    ngx_chain_t *chain = ngx_alloc_chain_link(r->pool);
-    if (!chain) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!ngx_alloc_chain_link"); goto free; }
-    chain->next = NULL;
-    ngx_buf_t *buf = chain->buf = ngx_create_temp_buf(r->pool, output.len);
+    ngx_chain_t chain;
+    chain.next = NULL;
+    ngx_buf_t *buf = chain.buf = ngx_create_temp_buf(r->pool, output.len);
     if (!buf) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!ngx_create_temp_buf"); goto free; }
-    buf->memory = 1;
+    buf->last_buf = 1;
     buf->last = ngx_copy(buf->last, output.data, output.len);
+    buf->memory = 1;
     free(output.data);
     if (buf->last != buf->end) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "buf->last != buf->end"); goto error; }
-    if (r == r->main && !r->post_action) {
-        buf->last_buf = 1;
-    } else {
-        buf->sync = 1;
-        buf->last_in_chain = 1;
-    }
     r->headers_out.content_length_n = output.len;
     ngx_int_t rc = ngx_http_next_header_filter(r);
     if (rc == NGX_ERROR || rc > NGX_OK || r->header_only) return NGX_ERROR;
     ngx_http_set_ctx(r, NULL, ngx_http_mustach_module);
-    return ngx_http_next_body_filter(r, chain);
+    return ngx_http_next_body_filter(r, &chain);
 free:
     free(output.data);
 error:
