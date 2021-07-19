@@ -11,6 +11,10 @@ typedef enum {
 } ngx_http_mustach_type_t;
 
 typedef struct {
+    ngx_str_t template;
+} ngx_http_mustach_context_t;
+
+typedef struct {
     ngx_http_complex_value_t *content;
     ngx_http_complex_value_t *json;
     ngx_http_complex_value_t *template;
@@ -119,16 +123,20 @@ static ngx_int_t ngx_http_mustach_header_filter(ngx_http_request_t *r) {
         r->headers_out.content_type = core->default_type;
     }
     r->headers_out.content_type_len = r->headers_out.content_type.len;
-    return ngx_http_next_header_filter(r);
+    ngx_http_mustach_context_t *context = ngx_pcalloc(r->pool, sizeof(*context));
+    if (!context) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!ngx_pcalloc"); return NGX_ERROR; }
+    if (ngx_http_complex_value(r, location->template, &context->template) != NGX_OK) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_http_complex_value != NGX_OK"); return NGX_ERROR; }
+    ngx_http_set_ctx(r, context, ngx_http_mustach_module);
+    r->main_filter_need_in_memory = 1;
+    return NGX_OK;
 }
 
 static ngx_int_t ngx_http_mustach_body_filter(ngx_http_request_t *r, ngx_chain_t *in) {
     if (!in) return ngx_http_next_body_filter(r, in);
+    ngx_http_mustach_context_t *context = ngx_http_get_module_ctx(r, ngx_http_mustach_module);
     ngx_http_mustach_location_t *location = ngx_http_get_module_loc_conf(r, ngx_http_mustach_module);
-    if (!location->template) return ngx_http_next_body_filter(r, in);
+    if (!location->template || !context || !context->template.len) return ngx_http_next_body_filter(r, in);
     ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "%s", __func__);
-    ngx_str_t template;
-    if (ngx_http_complex_value(r, location->template, &template) != NGX_OK) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_http_complex_value != NGX_OK"); goto error; }
     ngx_str_t json = ngx_null_string;
     for (ngx_chain_t *cl = in; cl; cl = cl->next) {
         if (!ngx_buf_in_memory(cl->buf)) continue;
@@ -153,7 +161,7 @@ static ngx_int_t ngx_http_mustach_body_filter(ngx_http_request_t *r, ngx_chain_t
     ngx_str_t output = ngx_null_string;
     FILE *out = open_memstream((char **)&output.data, &output.len);
     if (!out) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!open_memstream"); goto error; }
-    switch (ngx_http_mustach_process(r, (const char *)template.data, template.len, (const char *)json.data, json.len, out)) {
+    switch (ngx_http_mustach_process(r, (const char *)context->template.data, context->template.len, (const char *)json.data, json.len, out)) {
         case MUSTACH_OK: break;
         case MUSTACH_ERROR_SYSTEM: ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "MUSTACH_ERROR_SYSTEM"); goto free;
         case MUSTACH_ERROR_UNEXPECTED_END: ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "MUSTACH_ERROR_UNEXPECTED_END"); goto free;
@@ -185,10 +193,15 @@ static ngx_int_t ngx_http_mustach_body_filter(ngx_http_request_t *r, ngx_chain_t
         buf->sync = 1;
         buf->last_in_chain = 1;
     }
+    r->headers_out.content_length_n = output.len;
+    ngx_int_t rc = ngx_http_next_header_filter(r);
+    if (rc == NGX_ERROR || rc > NGX_OK || r->header_only) return NGX_ERROR;
+    ngx_http_set_ctx(r, NULL, ngx_http_mustach_module);
     return ngx_http_next_body_filter(r, chain);
 free:
     free(output.data);
 error:
+    ngx_http_set_ctx(r, NULL, ngx_http_mustach_module);
     return ngx_http_filter_finalize_request(r, &ngx_http_mustach_module, NGX_HTTP_INTERNAL_SERVER_ERROR);
 }
 
