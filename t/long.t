@@ -9,15 +9,19 @@ plan tests => repeat_each() * 2 * blocks();
 
 #$Test::Nginx::LWP::LogLevel = 'debug';
 
+our $main_config = <<'_EOC_';
+    load_module /etc/nginx/modules/ngx_http_mustach_module.so;
+_EOC_
+
+no_shuffle();
 run_tests();
 
 __DATA__
 
 === TEST 1: mustach
---- main_config
-    load_module /etc/nginx/modules/ngx_http_mustach_module.so;
+--- main_config eval: $::main_config
 --- config
-    location /mustach {
+    location /test {
         default_type application/json;
         mustach_content text/html;
         mustach_template 'Hello {{name}}
@@ -88,7 +92,7 @@ end
 }';
     }
 --- request
-    GET /mustach
+    GET /test
 --- response_body chop
 Hello Chris
 You have just won 10000 dollars!
@@ -140,10 +144,9 @@ end
 :
 &gt;
 === TEST 2: mustach
---- main_config
-    load_module /etc/nginx/modules/ngx_http_mustach_module.so;
+--- main_config eval: $::main_config
 --- config
-    location /mustach {
+    location /test {
         default_type application/json;
         mustach_content text/html;
         mustach_template '<h1>{{header}}</h1>
@@ -173,7 +176,7 @@ end
 }';
     }
 --- request
-    GET /mustach
+    GET /test
 --- response_body eval
 '<h1>Colors</h1>
 
@@ -197,10 +200,9 @@ end
 
 '
 === TEST 3: mustach
---- main_config
-    load_module /etc/nginx/modules/ngx_http_mustach_module.so;
+--- main_config eval: $::main_config
 --- config
-    location /mustach {
+    location /test {
         default_type application/json;
         mustach_content text/html;
         mustach_template '* {{name}}
@@ -226,7 +228,7 @@ end
 }';
     }
 --- request
-    GET /mustach
+    GET /test
 --- response_body chop
 * Chris
 * 18
@@ -243,10 +245,9 @@ end
 * skills: <ul><li>JavaScript</li><li>PHP</li><li>Java</li></ul>
 * age: 18
 === TEST 4: mustach
---- main_config
-    load_module /etc/nginx/modules/ngx_http_mustach_module.so;
+--- main_config eval: $::main_config
 --- config
-    location /mustach {
+    location /test {
         default_type application/json;
         mustach_content text/html;
         mustach_template 'This are extensions!!
@@ -322,7 +323,7 @@ No Fred#2? Hey Fred#2...
 }';
     }
 --- request
-    GET /mustach
+    GET /test
 --- response_body eval
 'This are extensions!!
 
@@ -426,10 +427,9 @@ Amed: 24/24/24
 '
 --- SKIP
 === TEST 5: mustach
---- main_config
-    load_module /etc/nginx/modules/ngx_http_mustach_module.so;
+--- main_config eval: $::main_config
 --- config
-    location /mustach {
+    location /test {
         default_type application/json;
         mustach_content text/html;
         mustach_template ' =====================================
@@ -479,7 +479,7 @@ Ensure must3 didn\'t change specials
 }';
     }
 --- request
-    GET /mustach
+    GET /test
 --- response_body eval
 ' =====================================
 from json

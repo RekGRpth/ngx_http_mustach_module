@@ -9,15 +9,19 @@ plan tests => repeat_each() * 2 * blocks();
 
 #$Test::Nginx::LWP::LogLevel = 'debug';
 
+our $main_config = <<'_EOC_';
+    load_module /etc/nginx/modules/ngx_http_mustach_module.so;
+_EOC_
+
+no_shuffle();
 run_tests();
 
 __DATA__
 
 === TEST 1: array-each
---- main_config
-    load_module /etc/nginx/modules/ngx_http_mustach_module.so;
+--- main_config eval: $::main_config
 --- config
-    location /mustach {
+    location /test {
         default_type application/json;
         mustach_template '{{#names}}{{name}}{{/names}}';
         mustach_content text/html;
@@ -39,14 +43,13 @@ __DATA__
 }';
     }
 --- request
-    GET /mustach
+    GET /test
 --- response_body chop
 MoeLarryCurlyShemp
 === TEST 2: complex
---- main_config
-    load_module /etc/nginx/modules/ngx_http_mustach_module.so;
+--- main_config eval: $::main_config
 --- config
-    location /mustach {
+    location /test {
         default_type application/json;
         mustach_template '<h1>{{header}}</h1>
 {{#hasItems}}
@@ -86,7 +89,7 @@ MoeLarryCurlyShemp
 }';
     }
 --- request
-    GET /mustach
+    GET /test
 --- response_body eval
 '<h1>Colors</h1>
 
@@ -111,10 +114,9 @@ MoeLarryCurlyShemp
 
 '
 === TEST 3: data
---- main_config
-    load_module /etc/nginx/modules/ngx_http_mustach_module.so;
+--- main_config eval: $::main_config
 --- config
-    location /mustach {
+    location /test {
         default_type application/json;
         mustach_template '{{#names}}{{@index}}{{name}}{{/names}}';
         mustach_content text/html;
@@ -136,14 +138,13 @@ MoeLarryCurlyShemp
 }';
     }
 --- request
-    GET /mustach
+    GET /test
 --- response_body chop
 MoeLarryCurlyShemp
 === TEST 4: depth-1
---- main_config
-    load_module /etc/nginx/modules/ngx_http_mustach_module.so;
+--- main_config eval: $::main_config
 --- config
-    location /mustach {
+    location /test {
         default_type application/json;
         mustach_template '{{#names}}{{foo}}{{/names}}';
         mustach_content text/html;
@@ -166,14 +167,13 @@ MoeLarryCurlyShemp
 }';
     }
 --- request
-    GET /mustach
+    GET /test
 --- response_body chop
 barbarbarbar
 === TEST 5: depth-2
---- main_config
-    load_module /etc/nginx/modules/ngx_http_mustach_module.so;
+--- main_config eval: $::main_config
 --- config
-    location /mustach {
+    location /test {
         default_type application/json;
         mustach_template '{{#names}}{{#name}}{{bat}}{{foo}}{{/name}}{{/names}}';
         mustach_content text/html;
@@ -208,14 +208,13 @@ barbarbarbar
 }';
     }
 --- request
-    GET /mustach
+    GET /test
 --- response_body chop
 foobarfoobarfoobarfoobar
 === TEST 6: object
---- main_config
-    load_module /etc/nginx/modules/ngx_http_mustach_module.so;
+--- main_config eval: $::main_config
 --- config
-    location /mustach {
+    location /test {
         default_type application/json;
         mustach_template '{{#person}}{{name}}{{age}}{{/person}}';
         mustach_content text/html;
@@ -227,14 +226,13 @@ foobarfoobarfoobarfoobar
 }';
     }
 --- request
-    GET /mustach
+    GET /test
 --- response_body chop
 Larry45
 === TEST 7: object-mustache
---- main_config
-    load_module /etc/nginx/modules/ngx_http_mustach_module.so;
+--- main_config eval: $::main_config
 --- config
-    location /mustach {
+    location /test {
         default_type application/json;
         mustach_template '{{#person}}{{name}}{{age}}{{/person}}';
         mustach_content text/html;
@@ -246,14 +244,13 @@ Larry45
 }';
     }
 --- request
-    GET /mustach
+    GET /test
 --- response_body chop
 Larry45
 === TEST 8: partial
---- main_config
-    load_module /etc/nginx/modules/ngx_http_mustach_module.so;
+--- main_config eval: $::main_config
 --- config
-    location /mustach {
+    location /test {
         default_type application/json;
         mustach_template '{{#peeps}}{{>variables}}{{/peeps}}';
         mustach_content text/html;
@@ -275,14 +272,13 @@ Larry45
 }';
     }
 --- request
-    GET /mustach
+    GET /test
 --- response_body chop
 Hello Moe! You have 15 new messages.Hello Larry! You have 5 new messages.Hello Curly! You have 1 new messages.
 === TEST 9: partial-recursion
---- main_config
-    load_module /etc/nginx/modules/ngx_http_mustach_module.so;
+--- main_config eval: $::main_config
 --- config
-    location /mustach {
+    location /test {
         default_type application/json;
         mustach_template '{{name}}{{#kids}}{{>recursion}}{{/kids}}';
         mustach_content text/html;
@@ -302,14 +298,13 @@ Hello Moe! You have 15 new messages.Hello Larry! You have 5 new messages.Hello C
 }';
     }
 --- request
-    GET /mustach
+    GET /test
 --- response_body chop
 11.11.1.1
 === TEST 10: paths
---- main_config
-    load_module /etc/nginx/modules/ngx_http_mustach_module.so;
+--- main_config eval: $::main_config
 --- config
-    location /mustach {
+    location /test {
         default_type application/json;
         mustach_template '{{person.name.bar.baz}}{{person.age}}{{person.foo}}{{animal.age}}';
         mustach_content text/html;
@@ -325,28 +320,26 @@ Hello Moe! You have 15 new messages.Hello Larry! You have 5 new messages.Hello C
 }';
     }
 --- request
-    GET /mustach
+    GET /test
 --- response_body chop
 Larry45
 === TEST 11: string
---- main_config
-    load_module /etc/nginx/modules/ngx_http_mustach_module.so;
+--- main_config eval: $::main_config
 --- config
-    location /mustach {
+    location /test {
         default_type application/json;
         mustach_template 'Hello world';
         mustach_content text/html;
         return 200 '{}';
     }
 --- request
-    GET /mustach
+    GET /test
 --- response_body chop
 Hello world
 === TEST 12: variables
---- main_config
-    load_module /etc/nginx/modules/ngx_http_mustach_module.so;
+--- main_config eval: $::main_config
 --- config
-    location /mustach {
+    location /test {
         default_type application/json;
         mustach_template 'Hello {{name}}! You have {{count}} new messages.';
         mustach_content text/html;
@@ -356,6 +349,6 @@ Hello world
 }';
     }
 --- request
-    GET /mustach
+    GET /test
 --- response_body chop
 Hello Mick! You have 30 new messages.
