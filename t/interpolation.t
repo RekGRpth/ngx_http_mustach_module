@@ -59,7 +59,7 @@ __DATA__
 --- request
     GET /mustach
 --- response_body eval
-"These characters should be HTML escaped: &amp; \" &lt; &gt;\n"
+"These characters should be HTML escaped: &amp; &quot; &lt; &gt;\n"
 === TEST 4: Triple Mustache
 --- main_config
     load_module /etc/nginx/modules/ngx_http_mustach_module.so;
@@ -484,7 +484,7 @@ __DATA__
 --- request
     GET /mustach
 --- response_body eval
-"These characters should be HTML escaped: &amp; \" &lt; &gt;\n"
+"These characters should be HTML escaped: &amp; &quot; &lt; &gt;\n"
 === TEST 28: Implicit Iterators - Triple Mustache
 --- main_config
     load_module /etc/nginx/modules/ngx_http_mustach_module.so;
