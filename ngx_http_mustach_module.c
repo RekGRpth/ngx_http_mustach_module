@@ -11,8 +11,12 @@ typedef enum {
 } ngx_http_mustach_type_t;
 
 typedef struct {
-    ngx_flag_t enable:1;
+    ngx_flag_t enable;
 } ngx_http_mustach_context_t;
+
+typedef struct {
+    ngx_flag_t enable;
+} ngx_http_mustach_server_t;
 
 typedef struct {
     ngx_http_complex_value_t *content;
@@ -94,7 +98,13 @@ static ngx_int_t ngx_http_mustach_handler(ngx_http_request_t *r) {
     return ngx_http_output_filter(r, &cl);
 }
 
-static char *ngx_http_set_complex_value_slot_my(ngx_conf_t *cf, ngx_command_t *cmd, void *conf) {
+static char *ngx_http_set_complex_value_slot_enable(ngx_conf_t *cf, ngx_command_t *cmd, void *conf) {
+    ngx_http_mustach_server_t *server = ngx_http_conf_get_module_srv_conf(cf, ngx_http_mustach_module);
+    server->enable = 1;
+    return ngx_http_set_complex_value_slot(cf, cmd, conf);
+}
+
+static char *ngx_http_set_complex_value_slot_handler(ngx_conf_t *cf, ngx_command_t *cmd, void *conf) {
     ngx_http_core_loc_conf_t *core = ngx_http_conf_get_module_loc_conf(cf, ngx_http_core_module);
     if (!core->handler) core->handler = ngx_http_mustach_handler;
     return ngx_http_set_complex_value_slot(cf, cmd, conf);
@@ -116,13 +126,13 @@ static ngx_command_t ngx_http_mustach_commands[] = {
     .post = NULL },
   { .name = ngx_string("mustach_json"),
     .type = NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_CONF_TAKE1,
-    .set = ngx_http_set_complex_value_slot_my,
+    .set = ngx_http_set_complex_value_slot_handler,
     .conf = NGX_HTTP_LOC_CONF_OFFSET,
     .offset = offsetof(ngx_http_mustach_location_t, json),
     .post = NULL },
   { .name = ngx_string("mustach_template"),
     .type = NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_CONF_TAKE1,
-    .set = ngx_http_set_complex_value_slot,
+    .set = ngx_http_set_complex_value_slot_enable,
     .conf = NGX_HTTP_LOC_CONF_OFFSET,
     .offset = offsetof(ngx_http_mustach_location_t, template),
     .post = NULL },
@@ -134,6 +144,20 @@ static ngx_command_t ngx_http_mustach_commands[] = {
     .post = &ngx_http_mustach_type },
     ngx_null_command
 };
+
+static void *ngx_http_mustach_create_srv_conf(ngx_conf_t *cf) {
+    ngx_http_mustach_server_t *server = ngx_pcalloc(cf->pool, sizeof(*server));
+    if (!server) return NULL;
+    server->enable = NGX_CONF_UNSET;
+    return server;
+}
+
+static char *ngx_http_mustach_merge_srv_conf(ngx_conf_t *cf, void *parent, void *child) {
+    ngx_http_mustach_server_t *prev = parent;
+    ngx_http_mustach_server_t *conf = child;
+    ngx_conf_merge_value(conf->enable, prev->enable, 0);
+    return NGX_CONF_OK;
+}
 
 static void *ngx_http_mustach_create_loc_conf(ngx_conf_t *cf) {
     ngx_http_mustach_location_t *location = ngx_pcalloc(cf->pool, sizeof(*location));
@@ -197,6 +221,8 @@ error:
 }
 
 static ngx_int_t ngx_http_mustach_postconfiguration(ngx_conf_t *cf) {
+    ngx_http_mustach_server_t *server = ngx_http_conf_get_module_srv_conf(cf, ngx_http_mustach_module);
+    if (!server->enable) return NGX_OK;
     ngx_http_next_header_filter = ngx_http_top_header_filter;
     ngx_http_top_header_filter = ngx_http_mustach_header_filter;
     ngx_http_next_body_filter = ngx_http_top_body_filter;
@@ -209,8 +235,8 @@ static ngx_http_module_t ngx_http_mustach_ctx = {
     .postconfiguration = ngx_http_mustach_postconfiguration,
     .create_main_conf = NULL,
     .init_main_conf = NULL,
-    .create_srv_conf = NULL,
-    .merge_srv_conf = NULL,
+    .create_srv_conf = ngx_http_mustach_create_srv_conf,
+    .merge_srv_conf = ngx_http_mustach_merge_srv_conf,
     .create_loc_conf = ngx_http_mustach_create_loc_conf,
     .merge_loc_conf = ngx_http_mustach_merge_loc_conf
 };
