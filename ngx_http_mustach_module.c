@@ -77,7 +77,14 @@ static ngx_buf_t *ngx_http_mustach_process(ngx_http_request_t *r, ngx_str_t json
     b->last = ngx_copy(b->last, output.data, output.len);
     b->memory = 1;
     if (b->last != b->end) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "b->last != b->end"); goto free; }
-    r->headers_out.content_length_n = output.len;
+    if (r == r->main) {
+        r->headers_out.content_length_n = b->last - b->pos;
+        if (r->headers_out.content_length) {
+            r->headers_out.content_length->hash = 0;
+            r->headers_out.content_length = NULL;
+        }
+        ngx_http_weak_etag(r);
+    }
 free:
     free(output.data);
     return b;
@@ -177,6 +184,7 @@ static ngx_int_t ngx_http_mustach_header_filter(ngx_http_request_t *r) {
     if (!context) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!ngx_pcalloc"); return NGX_ERROR; }
     context->enable = 1;
     ngx_http_set_ctx(r, context, ngx_http_mustach_module);
+    r->allow_ranges = 0;
     r->main_filter_need_in_memory = 1;
     return NGX_OK;
 }
