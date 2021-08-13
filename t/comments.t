@@ -56,7 +56,7 @@ __DATA__
 --- request
     GET /test
 --- response_body eval
-"Begin.\n\nEnd.\n"
+"Begin.\nEnd.\n"
 === TEST 4: Indented Standalone
 --- main_config eval: $::main_config
 --- config
@@ -69,7 +69,7 @@ __DATA__
 --- request
     GET /test
 --- response_body eval
-"Begin.\n  \nEnd.\n"
+"Begin.\nEnd.\n"
 === TEST 5: Standalone Line Endings
 --- main_config eval: $::main_config
 --- config
@@ -82,7 +82,7 @@ __DATA__
 --- request
     GET /test
 --- response_body eval
-"|\r\n\r\n|"
+"|\r\n|"
 === TEST 6: Standalone Without Previous Line
 --- main_config eval: $::main_config
 --- config
@@ -95,7 +95,7 @@ __DATA__
 --- request
     GET /test
 --- response_body eval
-"  \n!"
+"!"
 === TEST 7: Standalone Without Newline
 --- main_config eval: $::main_config
 --- config
@@ -108,7 +108,7 @@ __DATA__
 --- request
     GET /test
 --- response_body eval
-"!\n  "
+"!\n"
 === TEST 8: Multiline Standalone
 --- main_config eval: $::main_config
 --- config
@@ -121,7 +121,7 @@ __DATA__
 --- request
     GET /test
 --- response_body eval
-"Begin.\n\nEnd.\n"
+"Begin.\nEnd.\n"
 === TEST 9: Indented Multiline Standalone
 --- main_config eval: $::main_config
 --- config
@@ -134,7 +134,7 @@ __DATA__
 --- request
     GET /test
 --- response_body eval
-"Begin.\n  \nEnd.\n"
+"Begin.\nEnd.\n"
 === TEST 10: Indented Inline
 --- main_config eval: $::main_config
 --- config

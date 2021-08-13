@@ -136,7 +136,7 @@ __DATA__
 --- request
     GET /test
 --- response_body eval
-"\n* first\n\n* second\n\n* third\n\n"
+"* first\n* second\n* third\n"
 === TEST 8: Nested (Falsey)
 --- main_config eval: $::main_config
 --- config
@@ -294,7 +294,7 @@ __DATA__
 --- request
     GET /test
 --- response_body eval
-"| This Is\n\n|\n\n| A Line\n"
+"| This Is\n|\n| A Line\n"
 === TEST 18: Standalone Indented Lines
 --- main_config eval: $::main_config
 --- config
@@ -309,7 +309,7 @@ __DATA__
 --- request
     GET /test
 --- response_body eval
-"| This Is\n  \n|\n  \n| A Line\n"
+"| This Is\n|\n| A Line\n"
 === TEST 19: Standalone Line Endings
 --- main_config eval: $::main_config
 --- config
@@ -324,7 +324,7 @@ __DATA__
 --- request
     GET /test
 --- response_body eval
-"|\r\n\r\n\r\n|"
+"|\r\n|"
 === TEST 20: Standalone Without Previous Line
 --- main_config eval: $::main_config
 --- config
@@ -339,7 +339,7 @@ __DATA__
 --- request
     GET /test
 --- response_body eval
-"  \n^\n/"
+"^\n/"
 === TEST 21: Standalone Without Newline
 --- main_config eval: $::main_config
 --- config
@@ -354,7 +354,7 @@ __DATA__
 --- request
     GET /test
 --- response_body eval
-"^\n/\n  "
+"^\n/\n"
 === TEST 22: Padding
 --- main_config eval: $::main_config
 --- config

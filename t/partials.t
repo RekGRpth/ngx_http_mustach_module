@@ -132,7 +132,7 @@ __DATA__
 --- request
     GET /test
 --- response_body eval
-"|\r\n>\r\n|"
+"|\r\n>|"
 === TEST 8: Standalone Without Previous Line
 --- main_config eval: $::main_config
 --- config
@@ -147,7 +147,7 @@ __DATA__
 --- request
     GET /test
 --- response_body eval
-"  >\n>\n>"
+"  >\n  >>"
 === TEST 9: Standalone Without Newline
 --- main_config eval: $::main_config
 --- config
@@ -162,7 +162,7 @@ __DATA__
 --- request
     GET /test
 --- response_body eval
-">\n  >\n>"
+">\n  >\n  >"
 === TEST 10: Standalone Indentation
 --- main_config eval: $::main_config
 --- config
@@ -178,7 +178,7 @@ __DATA__
 --- request
     GET /test
 --- response_body eval
-"\\\n |\n<\n->\n|\n\n/\n"
+"\\\n |\n <\n->\n |\n/\n"
 === TEST 11: Padding Whitespace
 --- main_config eval: $::main_config
 --- config

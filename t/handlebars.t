@@ -63,8 +63,7 @@ MoeLarryCurlyShemp
       {{/current}}
     {{/items}}
   </ul>
-{{/hasItems}}
-';
+{{/hasItems}}';
         mustach_content text/html;
         return 200 '{
     "header": "Colors",
@@ -92,26 +91,11 @@ MoeLarryCurlyShemp
     GET /test
 --- response_body eval
 '<h1>Colors</h1>
-
   <ul>
-    
-      
         <li><strong>red</strong></li>
-      
-      
-    
-      
-      
         <li><a href="#Green">green</a></li>
-      
-    
-      
-      
         <li><a href="#Blue">blue</a></li>
-      
-    
   </ul>
-
 '
 === TEST 3: data
 --- main_config eval: $::main_config
