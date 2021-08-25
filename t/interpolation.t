@@ -196,7 +196,7 @@ __DATA__
 --- request
     GET /test
 --- response_body eval
-"I (null) be seen!"
+"I () be seen!"
 === TEST 13: Triple Mustache Null Interpolation
 --- main_config eval: $::main_config
 --- config
@@ -211,7 +211,7 @@ __DATA__
 --- request
     GET /test
 --- response_body eval
-"I (null) be seen!"
+"I () be seen!"
 === TEST 14: Ampersand Null Interpolation
 --- main_config eval: $::main_config
 --- config
@@ -226,7 +226,7 @@ __DATA__
 --- request
     GET /test
 --- response_body eval
-"I (null) be seen!"
+"I () be seen!"
 === TEST 15: Basic Context Miss Interpolation
 --- main_config eval: $::main_config
 --- config

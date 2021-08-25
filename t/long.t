@@ -96,42 +96,23 @@ end
 --- response_body chop
 Hello Chris
 You have just won 10000 dollars!
-
 Well, 6000 dollars, after taxes.
-
 Shown.
-
-
   No person
 
-
-
   <b>resque</b> reviewers:  avrel  commiters: joe  william
-
   <b>hub</b> reviewers:  avrel  commiters: jack  greg
-
   <b>rip</b> reviewers: joe jack  commiters:   greg
-
-
 
   Hi Jon!
 
-
-
  =====================================
-
-
   <b>resque</b> reviewers:  avrel  commiters: joe  william
-
   <b>hub</b> reviewers:  avrel  commiters: jack  greg
-
   <b>rip</b> reviewers: joe jack  commiters:   greg
-
  =====================================
-
 ggggggggg
-----3.14159----
-jjjjjjjjj
+----3.14159----jjjjjjjjj
 end
 
 #
@@ -180,23 +161,9 @@ end
 --- response_body eval
 '<h1>Colors</h1>
 
-
-
-  
     <li><strong>red</strong></li>
-  
-  
-
-  
-  
     <li><a href="#Green">green</a></li>
-  
-
-  
-  
     <li><a href="#Blue">blue</a></li>
-  
-
 
 '
 === TEST 3: mustach
@@ -235,11 +202,9 @@ end
 * &lt;b&gt;GitHub &amp; Co&lt;/b&gt;
 * <b>GitHub & Co</b>
 * <b>GitHub & Co</b>
-
 * &lt;b&gt;GitHub &amp; Co&lt;/b&gt;
 * <b>GitHub & Co</b>
 * <b>GitHub & Co</b>
-
 
 * <ul><li>Chris</li><li>Kross</li></ul>
 * skills: <ul><li>JavaScript</li><li>PHP</li><li>Java</li></ul>
@@ -483,59 +448,36 @@ Ensure must3 didn\'t change specials
 --- response_body eval
 ' =====================================
 from json
-----3.14159----
- =====================================
+----3.14159---- =====================================
 not found
-
  =====================================
 without extension first
 must2 == BEGIN
 Hello Chris
 You have just won 10000 dollars!
-
 Well, 6000 dollars, after taxes.
-
 Shown.
-
-
   No person
-
 must2 == END
-
  =====================================
 last with extension
 must3.mustache == BEGIN
-
   <b>resque</b> reviewers:  avrel  commiters: joe  william
-
   <b>hub</b> reviewers:  avrel  commiters: jack  greg
-
   <b>rip</b> reviewers: joe jack  commiters:   greg
-
-
 
   Hi Jon!
 
-
-
  =====================================
-
-
   <b>resque</b> reviewers:  avrel  commiters: joe  william
-
   <b>hub</b> reviewers:  avrel  commiters: jack  greg
-
   <b>rip</b> reviewers: joe jack  commiters:   greg
-
  =====================================
 must3.mustache == END
-
  =====================================
 Ensure must3 didn\'t change specials
 
-
   Hi Jon!
-
 
 %(%#person?%)%
   Hi %(%name%)%!
