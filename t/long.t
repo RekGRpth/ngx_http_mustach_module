@@ -54,7 +54,7 @@ Shown.
  =====================================
 %(%={{ }}=%)%
 ggggggggg
-{{> special}}
+{{> specia}}
 jjjjjjjjj
 end
 
@@ -79,7 +79,7 @@ end
     { "name": "rip", "who": [ { "reviewer": "joe" }, { "reviewer": "jack" }, { "commiter": "greg" } ]  }
   ],
   "person?": { "name": "Jon" },
-  "special": "----{{extra}}----",
+  "specia": "----{{extra}}----\n",
   "extra": 3.14159,
   "#sharp": "#",
   "!bang": "!",
@@ -93,8 +93,8 @@ end
     }
 --- request
     GET /test
---- response_body chop
-Hello Chris
+--- response_body eval
+'Hello Chris
 You have just won 10000 dollars!
 Well, 6000 dollars, after taxes.
 Shown.
@@ -112,7 +112,8 @@ Shown.
   <b>rip</b> reviewers: joe jack  commiters:   greg
  =====================================
 ggggggggg
-----3.14159----jjjjjjjjj
+----3.14159----
+jjjjjjjjj
 end
 
 #
@@ -123,7 +124,7 @@ end
 ^
 =
 :
-&gt;
+&gt;'
 === TEST 2: mustach
 --- main_config eval: $::main_config
 --- config
@@ -399,7 +400,7 @@ Amed: 24/24/24
         mustach_content text/html;
         mustach_template ' =====================================
 from json
-{{> special}}
+{{> specia}}
  =====================================
 not found
 {{> notfound}}
@@ -431,7 +432,7 @@ Ensure must3 didn\'t change specials
     { "name": "rip", "who": [ { "reviewer": "joe" }, { "reviewer": "jack" }, { "commiter": "greg" } ]  }
   ],
   "person?": { "name": "Jon" },
-  "special": "----{{extra}}----",
+  "specia": "----{{extra}}----",
   "extra": 3.14159,
   "#sharp": "#",
   "!bang": "!",
