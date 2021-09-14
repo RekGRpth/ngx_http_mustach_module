@@ -44,6 +44,7 @@ static ngx_buf_t *ngx_http_mustach_process(ngx_http_request_t *r, ngx_str_t json
     r->headers_out.content_type_len = r->headers_out.content_type.len;
     ngx_str_t template;
     if (ngx_http_complex_value(r, location->template, &template) != NGX_OK) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_http_complex_value != NGX_OK"); return NULL; }
+    if (!template.len) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!template.len"); return NULL; }
     int (*ngx_http_mustach_process)(ngx_http_request_t *r, const char *template, size_t length, const char *data, size_t len, FILE *file);
     switch (location->type) {
         case MUSTACH_CJSON: ngx_http_mustach_process = ngx_http_mustach_process_cjson; break;
