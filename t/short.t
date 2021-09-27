@@ -11,7 +11,7 @@ plan tests => repeat_each() * 2 * blocks();
 
 our $main_config = <<'_EOC_';
     load_module /etc/nginx/modules/ngx_http_mustach_module.so;
-    load_module /etc/nginx/modules/ngx_http_eval_module.so;
+    load_module /etc/nginx/modules/ngx_http_evaluate_module.so;
 _EOC_
 
 no_shuffle();
@@ -73,12 +73,13 @@ b
 --- main_config eval: $::main_config
 --- config
     location /test {
-        eval $json {
-            return 200 '{"a":"b"}';
-        }
+        evaluate $json /json;
         mustach_template "{{a}}";
         mustach_content text/html;
         mustach_json $json;
+    }
+    location /json {
+        return 200 '{"a":"b"}';
     }
 --- request
     GET /test
@@ -88,12 +89,13 @@ b
 --- main_config eval: $::main_config
 --- config
     location /test {
-        eval $json {
-            return 200 '{"people":[{"firstName":"Yehuda","lastName":"Katz"},{"firstName":"Carl","lastName":"Lerche"},{"firstName":"Alan","lastName":"Johnson"}]}';
-        }
+        evaluate $json /json;
         mustach_template '<ul>{{#people}}<li>{{firstName}} {{lastName}}</li>{{/people}}</ul>';
         mustach_content text/html;
         mustach_json $json;
+    }
+    location /json {
+        return 200 '{"people":[{"firstName":"Yehuda","lastName":"Katz"},{"firstName":"Carl","lastName":"Lerche"},{"firstName":"Alan","lastName":"Johnson"}]}';
     }
 --- request
     GET /test
@@ -103,12 +105,13 @@ b
 --- main_config eval: $::main_config
 --- config
     location /test {
-        eval $template {
-            return 200 '{{a}}';
-        }
+        evaluate $template /template;
         mustach_template $template;
         mustach_content text/html;
         mustach_json '{"a":"b"}';
+    }
+    location /template {
+        return 200 '{{a}}';
     }
 --- request
     GET /test
@@ -118,12 +121,13 @@ b
 --- main_config eval: $::main_config
 --- config
     location /test {
-        eval $template {
-            return 200 '<ul>{{#people}}<li>{{firstName}} {{lastName}}</li>{{/people}}</ul>';
-        }
+        evaluate $template /template;
         mustach_template $template;
         mustach_content text/html;
         mustach_json '{"people":[{"firstName":"Yehuda","lastName":"Katz"},{"firstName":"Carl","lastName":"Lerche"},{"firstName":"Alan","lastName":"Johnson"}]}';
+    }
+    location /template {
+        return 200 '<ul>{{#people}}<li>{{firstName}} {{lastName}}</li>{{/people}}</ul>';
     }
 --- request
     GET /test
