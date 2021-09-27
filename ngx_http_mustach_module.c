@@ -185,8 +185,6 @@ static ngx_int_t ngx_http_mustach_header_filter(ngx_http_request_t *r) {
     if (!context) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!ngx_pcalloc"); return NGX_ERROR; }
     context->enable = 1;
     ngx_http_set_ctx(r, context, ngx_http_mustach_module);
-    r->allow_ranges = 0;
-    r->main_filter_need_in_memory = 1;
     return NGX_OK;
 }
 
