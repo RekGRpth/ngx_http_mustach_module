@@ -195,7 +195,7 @@ static ngx_int_t ngx_http_mustach_body_filter(ngx_http_request_t *r, ngx_chain_t
     if (!location->template || !context || context->done) return ngx_http_next_body_filter(r, in);
     ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "%s", __func__);
     if (!in->buf->last_buf && !in->buf->last_in_chain) {
-        if (ngx_chain_add_copy(r->pool, &context->cl, in) != NGX_OK) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_chain_add_copy != NGX_OK"); return NGX_ERROR; }
+        if (ngx_chain_add_copy(r->pool, &context->cl, in) != NGX_OK) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_chain_add_copy != NGX_OK"); return NGX_HTTP_INTERNAL_SERVER_ERROR; }
         return ngx_http_next_body_filter(r, in);
     }
     ngx_str_t json = ngx_null_string;
@@ -204,7 +204,7 @@ static ngx_int_t ngx_http_mustach_body_filter(ngx_http_request_t *r, ngx_chain_t
         json.len += cl->buf->last - cl->buf->pos;
     }
     if (!json.len) return ngx_http_next_body_filter(r, in);
-    if (!(json.data = ngx_pnalloc(r->pool, json.len))) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!ngx_pnalloc"); return NGX_ERROR; }
+    if (!(json.data = ngx_pnalloc(r->pool, json.len))) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!ngx_pnalloc"); return NGX_HTTP_INTERNAL_SERVER_ERROR; }
     u_char *p = json.data;
     size_t len;
     for (ngx_chain_t *cl = context->cl ? context->cl : in; cl; cl = cl->next) {
@@ -213,10 +213,10 @@ static ngx_int_t ngx_http_mustach_body_filter(ngx_http_request_t *r, ngx_chain_t
         p = ngx_copy(p, cl->buf->pos, len);
     }
     ngx_chain_t cl = {.buf = ngx_http_mustach_process(r, json), .next = NULL};
-    if (!cl.buf) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!cl.buf"); return NGX_ERROR; }
+    if (!cl.buf) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!cl.buf"); return NGX_HTTP_INTERNAL_SERVER_ERROR; }
     context->done = 1;
     ngx_int_t rc = ngx_http_next_header_filter(r);
-    if (rc == NGX_ERROR || rc > NGX_OK || r->header_only) return NGX_ERROR;
+    if (rc == NGX_ERROR || rc > NGX_OK || r->header_only) return rc;
     return ngx_http_next_body_filter(r, &cl);
 }
 
