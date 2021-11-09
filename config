@@ -5,7 +5,7 @@ if test -n "$ngx_module_link"; then
     ngx_module_incs=
     ngx_module_deps="$ngx_addon_dir/ngx_http_mustach_module.h"
     ngx_module_srcs="$ngx_addon_dir/ngx_http_mustach_module.c $ngx_addon_dir/ngx_http_mustach-cjson.c $ngx_addon_dir/ngx_http_mustach-jansson.c $ngx_addon_dir/ngx_http_mustach-json-c.c"
-    ngx_module_libs="-lmustach -lcjson -ljansson -ljson-c"
+    ngx_module_libs="-lmustach"
 
     . auto/module
 else
