@@ -1,7 +1,7 @@
 #include "ngx_http_mustach_module.h"
 
-#if __has_include(<mustach/mustach-json-c.h>)
-#include <mustach/mustach-json-c.h>
+#if __has_include("mustach/mustach-json-c.h")
+#include "mustach/mustach-json-c.h"
 
 int ngx_http_mustach_process_json_c(ngx_http_request_t *r, const char *template, size_t length, const char *str, size_t len, FILE *file) {
     enum json_tokener_error error;

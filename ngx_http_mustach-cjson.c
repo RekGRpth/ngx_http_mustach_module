@@ -1,7 +1,7 @@
 #include "ngx_http_mustach_module.h"
 
-#if __has_include(<mustach/mustach-cjson.h>)
-#include <mustach/mustach-cjson.h>
+#if __has_include("mustach/mustach-cjson.h")
+#include "mustach/mustach-cjson.h"
 
 int ngx_http_mustach_process_cjson(ngx_http_request_t *r, const char *template, size_t length, const char *value, size_t buffer_length, FILE *file) {
     cJSON *root;
