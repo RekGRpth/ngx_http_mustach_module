@@ -12,7 +12,7 @@ int ngx_http_mustach_process_json_c(ngx_http_request_t *r, const char *template,
     do root = json_tokener_parse_ex(tok, str, len); while ((error = json_tokener_get_error(tok)) == json_tokener_continue);
     if (error != json_tokener_success) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!json_tokener_parse_ex and %s", json_tokener_error_desc(error)); goto free; }
     if (json_tokener_get_parse_end(tok) < len) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "json_tokener_get_parse_end < %li", len); goto put; }
-    rc = mustach_json_c_file(template, length, root, Mustach_With_AllExtensions, file);
+    rc = mustach_json_c_file(template, length, root, Mustach_With_AllExtensions | Mustach_With_ErrorUndefined, file);
 put:
     if (!json_object_put(root)) ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!json_object_put");
 free:

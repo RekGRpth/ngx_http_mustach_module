@@ -8,7 +8,7 @@ int ngx_http_mustach_process_jansson(ngx_http_request_t *r, const char *template
     json_error_t error;
     json_t *root;
     if (!(root = json_loadb(buffer, buflen, JSON_DECODE_ANY, &error))) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!json_loadb and %s", error.text); goto ret; }
-    rc = mustach_jansson_file(template, length, root, Mustach_With_AllExtensions, file);
+    rc = mustach_jansson_file(template, length, root, Mustach_With_AllExtensions | Mustach_With_ErrorUndefined, file);
     json_decref(root);
 ret:
     return rc;
