@@ -25,11 +25,13 @@ int ngx_http_mustach_process_json_c(ngx_http_request_t *r, const char *template,
     rc = mustach_json_c_file(template, length, root, flags, file);
     json_object_put(root);
 ret:
+    fclose(file);
     return rc;
 }
 #else
 int ngx_http_mustach_process_json_c(ngx_http_request_t *r, const char *template, size_t length, const char *str, size_t len, int flags, FILE *file) {
     ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!mustach_json_c");
+    fclose(file);
     return MUSTACH_ERROR_USER(1);
 }
 #endif

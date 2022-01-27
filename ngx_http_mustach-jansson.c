@@ -11,11 +11,13 @@ int ngx_http_mustach_process_jansson(ngx_http_request_t *r, const char *template
     rc = mustach_jansson_file(template, length, root, flags, file);
     json_decref(root);
 ret:
+    fclose(file);
     return rc;
 }
 #else
 int ngx_http_mustach_process_jansson(ngx_http_request_t *r, const char *template, size_t length, const char *buffer, size_t buflen, int flags, FILE *file) {
     ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!mustach_jansson");
+    fclose(file);
     return MUSTACH_ERROR_USER(1);
 }
 #endif
