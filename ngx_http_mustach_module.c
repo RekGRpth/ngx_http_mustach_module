@@ -1,9 +1,16 @@
-#include "ngx_http_mustach_module.h"
-
+#include <nginx.h>
 #include <ngx_config.h>
 #include <ngx_core.h>
+#include <ngx_http.h>
+#include <stddef.h>
+#include <stdio.h>
+
 #include <mustach/mustach.h>
 #include <mustach/mustach-wrap.h>
+
+int mustach_process_cjson(const char *template, size_t length, const char *value, size_t buffer_length, int flags, FILE *file, char **err);
+int mustach_process_jansson(const char *template, size_t length, const char *buffer, size_t buflen, int flags, FILE *file, char **err);
+int mustach_process_json_c(const char *template, size_t length, const char *str, size_t len, int flags, FILE *file, char **err);
 
 typedef enum {
     MUSTACH_CJSON,
@@ -53,12 +60,12 @@ static char *ngx_http_mustach_flags_conf(ngx_conf_t *cf, ngx_command_t *cmd, voi
         { ngx_string("singledot"), Mustach_With_SingleDot },
         { ngx_null_string, 0 }
     };
-    ngx_uint_t flags = Mustach_With_NoExtensions;
-    ngx_uint_t j;
-    for (j = 0; e[j].name.len; j++) if (e[j].name.len == args[1].len && !ngx_strncmp(e[j].name.data, args[1].data, args[1].len)) { flags = e[j].value; break; }
-    if (!e[j].name.len) { ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, "\"%V\" directive error: value \"%V\" must be \"allextensions\", \"colon\", \"compare\", \"emptytag\", \"equal\", \"errorundefined\", \"escfirstcmp\", \"incpartial\", \"jsonpointer\", \"noextensions\", \"objectiter\", \"partialdatafirst\" or \"singledot\"", &cmd->name, &args[1]); return NGX_CONF_ERROR; }
-    if (flags) location->flags |= flags;
-    else location->flags = Mustach_With_NoExtensions;
+    location->flags = Mustach_With_NoExtensions;
+    for (ngx_uint_t i = 1; i < cf->args->nelts; i++) {
+        ngx_uint_t j;
+        for (j = 0; e[j].name.len; j++) if (e[j].name.len == args[i].len && !ngx_strncmp(e[j].name.data, args[i].data, args[i].len)) { location->flags |= e[j].value; break; }
+        if (!e[j].name.len) { ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, "\"%V\" directive error: value \"%V\" must be \"allextensions\", \"colon\", \"compare\", \"emptytag\", \"equal\", \"errorundefined\", \"escfirstcmp\", \"incpartial\", \"jsonpointer\", \"noextensions\", \"objectiter\", \"partialdatafirst\" or \"singledot\"", &cmd->name, &args[1]); return NGX_CONF_ERROR; }
+    }
     return NGX_CONF_OK;
 }
 
@@ -77,18 +84,19 @@ static ngx_buf_t *ngx_http_mustach_process(ngx_http_request_t *r, ngx_str_t json
     ngx_str_t template;
     if (ngx_http_complex_value(r, location->template, &template) != NGX_OK) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_http_complex_value != NGX_OK"); return NULL; }
     if (!template.len) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!template.len"); return NULL; }
-    int (*ngx_http_mustach_process)(ngx_http_request_t *r, const char *template, size_t length, const char *data, size_t len, int flags, FILE *file);
+    int (*ngx_http_mustach_process)(const char *template, size_t length, const char *data, size_t len, int flags, FILE *file, char **err);
     switch (location->type) {
-        case MUSTACH_CJSON: ngx_http_mustach_process = ngx_http_mustach_process_cjson; break;
-        case MUSTACH_JANSSON: ngx_http_mustach_process = ngx_http_mustach_process_jansson; break;
-        case MUSTACH_JSON_C: ngx_http_mustach_process = ngx_http_mustach_process_json_c; break;
+        case MUSTACH_CJSON: ngx_http_mustach_process = mustach_process_cjson; break;
+        case MUSTACH_JANSSON: ngx_http_mustach_process = mustach_process_jansson; break;
+        case MUSTACH_JSON_C: ngx_http_mustach_process = mustach_process_json_c; break;
         default: ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "location->type = %i", location->type); return NULL;
     }
     ngx_str_t output = ngx_null_string;
     FILE *out = open_memstream((char **)&output.data, &output.len);
     if (!out) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!open_memstream"); return NULL; }
     ngx_buf_t *b = NULL;
-    switch (ngx_http_mustach_process(r, (const char *)template.data, template.len, (const char *)json.data, json.len, location->flags, out)) {
+    char *err;
+    switch (ngx_http_mustach_process((const char *)template.data, template.len, (const char *)json.data, json.len, location->flags, out, &err)) {
         case MUSTACH_OK: break;
         case MUSTACH_ERROR_SYSTEM: ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "MUSTACH_ERROR_SYSTEM"); goto free;
         case MUSTACH_ERROR_UNEXPECTED_END: ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "MUSTACH_ERROR_UNEXPECTED_END"); goto free;
@@ -102,9 +110,8 @@ static ngx_buf_t *ngx_http_mustach_process(ngx_http_request_t *r, ngx_str_t json
         case MUSTACH_ERROR_ITEM_NOT_FOUND: ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "MUSTACH_ERROR_ITEM_NOT_FOUND"); goto free;
         case MUSTACH_ERROR_PARTIAL_NOT_FOUND: ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "MUSTACH_ERROR_PARTIAL_NOT_FOUND"); goto free;
         case MUSTACH_ERROR_UNDEFINED_TAG: ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "MUSTACH_ERROR_UNDEFINED_TAG"); goto free;
-        default: goto free;
+        default: ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "%s", err); goto free;
     }
-    if (!output.len) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!output.len"); goto free; }
     if (!(b = ngx_create_temp_buf(r->pool, output.len))) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!ngx_create_temp_buf"); goto free; }
     b->last_buf = 1;
     b->last = ngx_copy(b->last, output.data, output.len);
@@ -252,7 +259,7 @@ static ngx_int_t ngx_http_mustach_body_filter(ngx_http_request_t *r, ngx_chain_t
         p = ngx_copy(p, cl->buf->pos, len);
     }
     ngx_chain_t cl = {.buf = ngx_http_mustach_process(r, json), .next = NULL};
-    if (!cl.buf) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!cl.buf"); return NGX_HTTP_INTERNAL_SERVER_ERROR; }
+    if (!cl.buf) return NGX_HTTP_INTERNAL_SERVER_ERROR;
     context->done = 1;
     ngx_int_t rc = ngx_http_next_header_filter(r);
     if (rc == NGX_ERROR || rc > NGX_OK || r->header_only) return rc;
