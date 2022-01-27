@@ -4,7 +4,7 @@
 #include "mustach/mustach-jansson.h"
 
 int ngx_http_mustach_process_jansson(ngx_http_request_t *r, const char *template, size_t length, const char *buffer, size_t buflen, int flags, FILE *file) {
-    int rc = -1;
+    int rc = MUSTACH_ERROR_USER(1);
     json_error_t error;
     json_t *root;
     if (!(root = json_loadb(buffer, buflen, JSON_DECODE_ANY, &error))) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!json_loadb and %s", error.text); goto ret; }
@@ -16,6 +16,6 @@ ret:
 #else
 int ngx_http_mustach_process_jansson(ngx_http_request_t *r, const char *template, size_t length, const char *buffer, size_t buflen, int flags, FILE *file) {
     ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!mustach_jansson");
-    return -1;
+    return MUSTACH_ERROR_USER(1);
 }
 #endif

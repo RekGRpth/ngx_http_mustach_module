@@ -5,7 +5,7 @@
 
 int ngx_http_mustach_process_json_c(ngx_http_request_t *r, const char *template, size_t length, const char *str, size_t len, int flags, FILE *file) {
     enum json_tokener_error error;
-    int rc = -1;
+    int rc = MUSTACH_ERROR_USER(1);
     struct json_object *root;
     struct json_tokener *tok;
     if (!(tok = json_tokener_new())) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!json_tokener_new"); goto ret; }
@@ -23,6 +23,6 @@ ret:
 #else
 int ngx_http_mustach_process_json_c(ngx_http_request_t *r, const char *template, size_t length, const char *str, size_t len, int flags, FILE *file) {
     ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!mustach_json_c");
-    return -1;
+    return MUSTACH_ERROR_USER(1);
 }
 #endif
