@@ -64,7 +64,7 @@ static char *ngx_http_mustach_flags_conf(ngx_conf_t *cf, ngx_command_t *cmd, voi
     for (ngx_uint_t i = 1; i < cf->args->nelts; i++) {
         ngx_uint_t j;
         for (j = 0; e[j].name.len; j++) if (e[j].name.len == args[i].len && !ngx_strncmp(e[j].name.data, args[i].data, args[i].len)) { location->flags |= e[j].value; break; }
-        if (!e[j].name.len) { ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, "\"%V\" directive error: value \"%V\" must be \"allextensions\", \"colon\", \"compare\", \"emptytag\", \"equal\", \"errorundefined\", \"escfirstcmp\", \"incpartial\", \"jsonpointer\", \"noextensions\", \"objectiter\", \"partialdatafirst\" or \"singledot\"", &cmd->name, &args[1]); return NGX_CONF_ERROR; }
+        if (!e[j].name.len) { ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, "\"%V\" directive error: value \"%V\" must be \"allextensions\", \"colon\", \"compare\", \"emptytag\", \"equal\", \"errorundefined\", \"escfirstcmp\", \"incpartial\", \"jsonpointer\", \"noextensions\", \"objectiter\", \"partialdatafirst\" or \"singledot\"", &cmd->name, &args[i]); return NGX_CONF_ERROR; }
     }
     return NGX_CONF_OK;
 }
