@@ -3,20 +3,27 @@
 #if __has_include("mustach/mustach-json-c.h")
 #include "mustach/mustach-json-c.h"
 
+static struct json_object *json_tokener_parse_verbose_len(const char *str, size_t len, enum json_tokener_error *error) {
+    struct json_tokener *tok;
+    struct json_object *obj;
+    if (!(tok = json_tokener_new())) return NULL;
+    obj = json_tokener_parse_ex(tok, str, len);
+    *error = tok->err;
+    if (tok->err != json_tokener_success || json_tokener_get_parse_end(tok) != len) {
+        if (obj) json_object_put(obj);
+        obj = NULL;
+    }
+    json_tokener_free(tok);
+    return obj;
+}
+
 int ngx_http_mustach_process_json_c(ngx_http_request_t *r, const char *template, size_t length, const char *str, size_t len, int flags, FILE *file) {
-    enum json_tokener_error error;
+    enum json_tokener_error error = json_tokener_success;
     int rc = MUSTACH_ERROR_USER(1);
     struct json_object *root;
-    struct json_tokener *tok;
-    if (!(tok = json_tokener_new())) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!json_tokener_new"); goto ret; }
-    do root = json_tokener_parse_ex(tok, str, len); while ((error = json_tokener_get_error(tok)) == json_tokener_continue);
-    if (error != json_tokener_success) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!json_tokener_parse_ex and %s", json_tokener_error_desc(error)); goto free; }
-    if (json_tokener_get_parse_end(tok) < len) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "json_tokener_get_parse_end < %li", len); goto put; }
+    if (!(root = json_tokener_parse_verbose_len(str, len, &error))) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!json_tokener_parse_verbose_len and %s", json_tokener_error_desc(error)); goto ret; }
     rc = mustach_json_c_file(template, length, root, flags, file);
-put:
-    if (!json_object_put(root)) ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!json_object_put");
-free:
-    json_tokener_free(tok);
+    json_object_put(root);
 ret:
     return rc;
 }
