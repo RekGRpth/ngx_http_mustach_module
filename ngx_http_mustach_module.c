@@ -76,10 +76,7 @@ static ngx_buf_t *ngx_http_mustach_process(ngx_http_request_t *r, ngx_str_t json
     ngx_http_weak_etag(r);
     ngx_http_mustach_location_t *location = ngx_http_get_module_loc_conf(r, ngx_http_mustach_module);
     if (location->content && ngx_http_complex_value(r, location->content, &r->headers_out.content_type) != NGX_OK) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_http_complex_value != NGX_OK"); return NULL; }
-    if (!r->headers_out.content_type.data) {
-        ngx_http_core_loc_conf_t *core = ngx_http_get_module_loc_conf(r, ngx_http_core_module);
-        r->headers_out.content_type = core->default_type;
-    }
+    if (ngx_http_set_content_type(r) != NGX_OK) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_http_set_content_type != NGX_OK"); return NULL; }
     r->headers_out.content_type_len = r->headers_out.content_type.len;
     ngx_str_t template;
     if (ngx_http_complex_value(r, location->template, &template) != NGX_OK) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_http_complex_value != NGX_OK"); return NULL; }
