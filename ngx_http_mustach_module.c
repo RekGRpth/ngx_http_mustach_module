@@ -231,6 +231,25 @@ static ngx_int_t ngx_http_mustach_header_filter(ngx_http_request_t *r) {
     return NGX_OK;
 }
 
+static ngx_int_t ngx_chain_add_copy_buf(ngx_pool_t *pool, ngx_chain_t **chain, ngx_chain_t *in) {
+    ngx_chain_t *cl, **ll = chain;
+    ngx_int_t rc = NGX_ERROR;
+    for (cl = *chain; cl; cl = cl->next) ll = &cl->next;
+    while (in) {
+        if (!(cl = ngx_alloc_chain_link(pool))) goto ret;
+        if (!(cl->buf = ngx_create_temp_buf(pool, in->buf->last - in->buf->pos))) goto ret;
+        *cl->buf = *in->buf;
+        in->buf->pos = in->buf->last;
+        *ll = cl;
+        ll = &cl->next;
+        in = in->next;
+    }
+    rc = NGX_OK;
+ret:
+    *ll = NULL;
+    return rc;
+}
+
 static ngx_int_t ngx_http_mustach_body_filter(ngx_http_request_t *r, ngx_chain_t *in) {
     if (!in) return ngx_http_next_body_filter(r, in);
     ngx_http_mustach_context_t *context = ngx_http_get_module_ctx(r, ngx_http_mustach_module);
@@ -238,8 +257,8 @@ static ngx_int_t ngx_http_mustach_body_filter(ngx_http_request_t *r, ngx_chain_t
     if (!location->template || !context || context->done) return ngx_http_next_body_filter(r, in);
     ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "%s", __func__);
     if (!in->buf->last_buf && !in->buf->last_in_chain) {
-        if (ngx_chain_add_copy(r->pool, &context->cl, in) != NGX_OK) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_chain_add_copy != NGX_OK"); return NGX_HTTP_INTERNAL_SERVER_ERROR; }
-        return ngx_http_next_body_filter(r, in);
+        if (ngx_chain_add_copy_buf(r->pool, &context->cl, in) != NGX_OK) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_chain_add_copy_buf != NGX_OK"); return NGX_HTTP_INTERNAL_SERVER_ERROR; }
+        return NGX_OK;
     }
     ngx_str_t json = ngx_null_string;
     for (ngx_chain_t *cl = context->cl ? context->cl : in; cl; cl = cl->next) {
