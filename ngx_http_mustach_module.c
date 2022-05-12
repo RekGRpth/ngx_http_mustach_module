@@ -42,7 +42,7 @@ static ngx_http_output_body_filter_pt ngx_http_next_body_filter;
 
 static char *ngx_http_mustach_flags_conf(ngx_conf_t *cf, ngx_command_t *cmd, void *conf) {
     ngx_http_mustach_location_t *location = conf;
-    if (location->flags != NGX_CONF_UNSET_UINT) return "duplicate";
+    if (location->flags != NGX_CONF_UNSET_UINT) return "is duplicate";
     ngx_str_t *args = cf->args->elts;
     static const ngx_conf_enum_t e[] = {
         { ngx_string("allextensions"), Mustach_With_AllExtensions },
