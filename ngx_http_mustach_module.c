@@ -93,7 +93,6 @@ static ngx_buf_t *ngx_http_mustach_process(ngx_http_request_t *r, ngx_str_t json
     if (!out) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!open_memstream"); return NULL; }
     ngx_buf_t *b = NULL;
     char *err;
-    if (!json.len) { ngx_str_set(&json, "{}"); }
     switch (ngx_http_mustach_process((const char *)template.data, template.len, (const char *)json.data, json.len, location->flags, out, &err)) {
         case MUSTACH_OK: break;
         case MUSTACH_ERROR_SYSTEM: ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "MUSTACH_ERROR_SYSTEM"); goto free;
