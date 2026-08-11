@@ -273,9 +273,16 @@ static ngx_int_t ngx_http_mustach_body_filter(ngx_http_request_t *r, ngx_chain_t
     ngx_http_mustach_location_t *location = ngx_http_get_module_loc_conf(r, ngx_http_mustach_module);
     if (!location->template || !context || context->done) return ngx_http_next_body_filter(r, in);
     ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "%s", __func__);
-    if (!in->buf->last_buf && !in->buf->last_in_chain) {
+    ngx_chain_t *last;
+    for (last = in; last->next; last = last->next);
+    if (!last->buf->last_buf && !last->buf->last_in_chain) {
         if (ngx_chain_add_copy_buf(r->pool, &context->cl, in) != NGX_OK) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_chain_add_copy_buf != NGX_OK"); return NGX_HTTP_INTERNAL_SERVER_ERROR; }
         return NGX_OK;
+    }
+    if (context->cl) {
+        ngx_chain_t *tail;
+        for (tail = context->cl; tail->next; tail = tail->next);
+        tail->next = in;
     }
     ngx_str_t json = ngx_null_string;
     for (ngx_chain_t *cl = context->cl ? context->cl : in; cl; cl = cl->next) {
