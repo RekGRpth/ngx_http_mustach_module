@@ -1,0 +1,6 @@
+# Editor
+.vscode/
+
+# Test::Nginx runtime artifacts (created by `prove -r t/`)
+t/servroot/
+
