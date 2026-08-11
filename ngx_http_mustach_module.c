@@ -165,7 +165,8 @@ static char *ngx_http_set_complex_value_slot_enable(ngx_conf_t *cf, ngx_command_
 
 static char *ngx_http_set_complex_value_slot_handler(ngx_conf_t *cf, ngx_command_t *cmd, void *conf) {
     ngx_http_core_loc_conf_t *core = ngx_http_conf_get_module_loc_conf(cf, ngx_http_core_module);
-    if (!core->handler) core->handler = ngx_http_mustach_handler;
+    if (core->handler && core->handler != ngx_http_mustach_handler) { ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, "\"%V\" directive conflicts with another content handler already set for this location", &cmd->name); return NGX_CONF_ERROR; }
+    core->handler = ngx_http_mustach_handler;
     return ngx_http_set_complex_value_slot(cf, cmd, conf);
 }
 
