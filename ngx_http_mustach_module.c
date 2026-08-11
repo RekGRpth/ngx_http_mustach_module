@@ -240,7 +240,9 @@ static char *ngx_http_mustach_merge_loc_conf(ngx_conf_t *cf, void *parent, void 
 static ngx_int_t ngx_http_mustach_header_filter(ngx_http_request_t *r) {
     ngx_http_mustach_location_t *location = ngx_http_get_module_loc_conf(r, ngx_http_mustach_module);
     if (!location->template) return ngx_http_next_header_filter(r);
-    if (!(r->headers_out.content_type.len >= sizeof("application/json") - 1 && !ngx_strncasecmp(r->headers_out.content_type.data, (u_char *)"application/json", sizeof("application/json") - 1))) return ngx_http_next_header_filter(r);
+    size_t len = sizeof("application/json") - 1;
+    u_char *p = r->headers_out.content_type.data;
+    if (!(r->headers_out.content_type.len >= len && !ngx_strncasecmp(p, (u_char *)"application/json", len) && (r->headers_out.content_type.len == len || p[len] == ';' || p[len] == ' '))) return ngx_http_next_header_filter(r);
     ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "%s", __func__);
     ngx_http_mustach_context_t *context = ngx_pcalloc(r->pool, sizeof(*context));
     if (!context) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!ngx_pcalloc"); return NGX_ERROR; }
