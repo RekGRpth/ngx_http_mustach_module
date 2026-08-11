@@ -11,11 +11,13 @@
 int mustach_process_cjson(const char *template, size_t length, const char *value, size_t buffer_length, int flags, FILE *file, char **err);
 int mustach_process_jansson(const char *template, size_t length, const char *buffer, size_t buflen, int flags, FILE *file, char **err);
 int mustach_process_json_c(const char *template, size_t length, const char *str, size_t len, int flags, FILE *file, char **err);
+int mustach_process_jsmn(const char *template, size_t length, const char *json, size_t jsonlen, int flags, FILE *file, char **err);
 
 typedef enum {
     MUSTACH_CJSON,
     MUSTACH_JANSSON,
-    MUSTACH_JSON_C
+    MUSTACH_JSON_C,
+    MUSTACH_JSMN
 } ngx_http_mustach_type_t;
 
 typedef struct {
@@ -86,6 +88,7 @@ static ngx_buf_t *ngx_http_mustach_process(ngx_http_request_t *r, ngx_str_t json
         case MUSTACH_CJSON: ngx_http_mustach_process = mustach_process_cjson; break;
         case MUSTACH_JANSSON: ngx_http_mustach_process = mustach_process_jansson; break;
         case MUSTACH_JSON_C: ngx_http_mustach_process = mustach_process_json_c; break;
+        case MUSTACH_JSMN: ngx_http_mustach_process = mustach_process_jsmn; break;
         default: ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "location->type = %i", location->type); return NULL;
     }
     ngx_str_t output = ngx_null_string;
@@ -174,6 +177,7 @@ static ngx_conf_enum_t ngx_http_mustach_type[] = {
     { ngx_string("cjson"), MUSTACH_CJSON },
     { ngx_string("jansson"), MUSTACH_JANSSON },
     { ngx_string("json-c"), MUSTACH_JSON_C },
+    { ngx_string("jsmn"), MUSTACH_JSMN },
     { ngx_null_string, 0 }
 };
 
