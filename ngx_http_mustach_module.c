@@ -128,7 +128,6 @@ static ngx_buf_t *ngx_http_mustach_process(ngx_http_request_t *r, ngx_str_t json
     if (!(b = ngx_create_temp_buf(r->pool, output.len))) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!ngx_create_temp_buf"); goto free; }
     b->last_buf = 1;
     b->last = ngx_copy(b->last, output.data, output.len);
-    b->memory = 1;
     if (b->last != b->end) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "b->last != b->end"); goto free; }
     if (r == r->main) {
         r->headers_out.content_length_n = b->last - b->pos;
