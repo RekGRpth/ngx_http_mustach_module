@@ -1,9 +1,11 @@
 # vi:filetype=
 #
-# Coverage for the mustach_type directive and its non-default JSON
-# backends (mustach_process_cjson / mustach_process_jansson / mustach_process_jsmn
-# in mustach-cjson.c / mustach-jansson.c / mustach-jsmn.c). The rest of the
-# suite only exercises the default json-c backend.
+# Coverage for the mustach_type directive and its explicitly-selected JSON
+# backends (mustach_process_cjson / mustach_process_jansson / mustach_process_json_c
+# in mustach-cjson.c / mustach-jansson.c / mustach-json-c.c). jsmn is the
+# default backend (mustach-jsmn.c) since it needs no external JSON library
+# and has no symbol-collision exposure, so the rest of the suite already
+# exercises it without setting mustach_type explicitly.
 
 use lib 'lib';
 use Test::Nginx::Socket;
@@ -58,7 +60,7 @@ __DATA__
 <ul><li>Yehuda Katz</li><li>Carl Lerche</li></ul>
 --- SKIP
 
-=== TEST 3: mustach_type json-c (explicit, same as default)
+=== TEST 3: mustach_type json-c
 --- main_config
     load_module /etc/nginx/modules/ngx_http_mustach_module.so;
 --- config

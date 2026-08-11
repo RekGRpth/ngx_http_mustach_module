@@ -237,7 +237,7 @@ static char *ngx_http_mustach_merge_loc_conf(ngx_conf_t *cf, void *parent, void 
     if (!conf->template) conf->template = prev->template;
     if (conf->json && !conf->template) { ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, "\"mustach_json\" requires \"mustach_template\" to be set in the same location"); return NGX_CONF_ERROR; }
     ngx_conf_merge_uint_value(conf->flags, prev->flags, Mustach_With_AllExtensions);
-    ngx_conf_merge_uint_value(conf->type, prev->type, MUSTACH_JSON_C);
+    ngx_conf_merge_uint_value(conf->type, prev->type, MUSTACH_JSMN);
     return NGX_CONF_OK;
 }
 
