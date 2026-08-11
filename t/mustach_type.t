@@ -31,12 +31,18 @@ __DATA__
 <ul><li>Yehuda Katz</li><li>Carl Lerche</li></ul>
 
 === TEST 2: mustach_type jansson
-# Currently broken in this environment: variable lookups resolve to the
-# whole JSON document instead of the named field's value, regardless of
-# mustach_flags. Reproduced with a minimal "{{a}}" template too, so this is
-# a bug in the vendored mustach library's jansson backend (mustach-jansson.c
-# upstream, not this module's own thin wrapper of the same name), not in
-# ngx_http_mustach_module.c. Kept (skipped) so a future fix gets noticed.
+# Currently broken: variable lookups always resolve to the whole JSON
+# document instead of the named field's value. Root cause (confirmed via
+# LD_DEBUG=bindings): libmustach.so links cjson + json-c + jansson into one
+# shared object, and json-c's json_object_get(obj) (refcount increment,
+# 1 arg) and jansson's json_object_get(obj, key) (field lookup, 2 args)
+# share the same symbol name. The dynamic linker resolves mustach-jansson.c's
+# calls to json-c's version process-wide, so the "key" argument is silently
+# dropped and every lookup just returns the input object unchanged -- hence
+# the whole document coming back instead of a field. This is an upstream
+# mustach/json-c/jansson linking hazard (needs a fix in mustach-jansson.c
+# in the sibling mustach repo, or a linking-scheme change), not a bug in
+# this module's own code. Kept (skipped) so a future fix gets noticed.
 --- main_config
     load_module /etc/nginx/modules/ngx_http_mustach_module.so;
 --- config
