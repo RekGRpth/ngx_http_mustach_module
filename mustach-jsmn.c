@@ -11,7 +11,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-int mustach_process_jsmn(const char *template, size_t length, const char *json, size_t jsonlen, int flags, FILE *file, char **err);
+int mustach_process_jsmn(const char *template, size_t length, const char *json, size_t jsonlen, int flags, FILE *file, char **err, ngx_pool_t *pool);
 
 struct frame {
     int container;   /* token index of the array being iterated, or -1 */
@@ -366,30 +366,26 @@ static const struct mustach_wrap_itf mustach_jsmn_wrap_itf = {
     .get = get
 };
 
-int mustach_process_jsmn(const char *template, size_t length, const char *json, size_t jsonlen, int flags, FILE *file, char **err) {
+int mustach_process_jsmn(const char *template, size_t length, const char *json, size_t jsonlen, int flags, FILE *file, char **err, ngx_pool_t *pool) {
     jsmn_parser p;
     jsmntok_t *tokens;
-    ngx_pool_t *pool;
     int ntok, rc;
     struct expl e;
 
     if (!jsonlen) { json = "{}"; jsonlen = 2; }
 
-    if (!(pool = ngx_create_pool(ngx_pagesize, ngx_cycle->log))) { fclose(file); return MUSTACH_ERROR_SYSTEM; }
-
     jsmn_init(&p);
     ntok = jsmn_parse(&p, json, jsonlen, NULL, 0);
-    if (ntok < 0) { ngx_destroy_pool(pool); *err = "invalid json"; fclose(file); return MUSTACH_ERROR_USER(1); }
-    if (!(tokens = ngx_palloc(pool, (size_t) (ntok ? ntok : 1) * sizeof(*tokens)))) { ngx_destroy_pool(pool); fclose(file); return MUSTACH_ERROR_SYSTEM; }
+    if (ntok < 0) { *err = "invalid json"; fclose(file); return MUSTACH_ERROR_USER(1); }
+    if (!(tokens = ngx_palloc(pool, (size_t) (ntok ? ntok : 1) * sizeof(*tokens)))) { fclose(file); return MUSTACH_ERROR_SYSTEM; }
 
     jsmn_init(&p);
-    if (jsmn_parse(&p, json, jsonlen, tokens, (unsigned) ntok) < 0) { ngx_destroy_pool(pool); *err = "invalid json"; fclose(file); return MUSTACH_ERROR_USER(1); }
+    if (jsmn_parse(&p, json, jsonlen, tokens, (unsigned) ntok) < 0) { *err = "invalid json"; fclose(file); return MUSTACH_ERROR_USER(1); }
 
     e.json = json;
     e.tokens = tokens;
     e.pool = pool;
     rc = mustach_wrap_file(template, length, &mustach_jsmn_wrap_itf, &e, flags, file);
-    ngx_destroy_pool(pool);
     fclose(file);
     return rc;
 }

@@ -8,7 +8,7 @@
 #include <mustach/mustach.h>
 #include <mustach/mustach-wrap.h>
 
-int mustach_process_jsmn(const char *template, size_t length, const char *json, size_t jsonlen, int flags, FILE *file, char **err);
+int mustach_process_jsmn(const char *template, size_t length, const char *json, size_t jsonlen, int flags, FILE *file, char **err, ngx_pool_t *pool);
 
 typedef struct {
     ngx_chain_t *cl;
@@ -77,7 +77,7 @@ static ngx_buf_t *ngx_http_mustach_process(ngx_http_request_t *r, ngx_str_t json
     if (!out) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!open_memstream"); return NULL; }
     ngx_buf_t *b = NULL;
     char *err;
-    switch (mustach_process_jsmn((const char *)template.data, template.len, (const char *)json.data, json.len, location->flags, out, &err)) {
+    switch (mustach_process_jsmn((const char *)template.data, template.len, (const char *)json.data, json.len, location->flags, out, &err, r->pool)) {
         case MUSTACH_OK: break;
         case MUSTACH_ERROR_SYSTEM: ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "MUSTACH_ERROR_SYSTEM"); goto free;
         case MUSTACH_ERROR_UNEXPECTED_END: ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "MUSTACH_ERROR_UNEXPECTED_END"); goto free;
