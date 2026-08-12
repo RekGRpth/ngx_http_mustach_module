@@ -1,6 +1,9 @@
 #define JSMN_STATIC
 #include "jsmn.h"
 
+#include <ngx_config.h>
+#include <ngx_core.h>
+
 #include <mustach/mustach.h>
 #include <mustach/mustach-wrap.h>
 
@@ -22,6 +25,7 @@ struct frame {
 struct expl {
     const char *json;
     jsmntok_t *tokens;
+    ngx_pool_t *pool;
     int selection;    /* token index, or -1 for "no value" */
     int depth;
     struct frame stack[MUSTACH_MAX_DEPTH];
@@ -91,16 +95,15 @@ static int is_truthy(struct expl *e, int idx) {
     }
 }
 
-/* Decode a jsmn string token's JSON escapes into a fresh NUL-less buffer.
- * Returns a pointer suitable for sbuf->value/length; sets *alloc to 1 if
- * the caller must free() it (only needed when the token actually
- * contained a backslash escape -- the common escape-free case is
- * returned as a direct slice of the original json buffer, no copy). */
-static const char *decode_string(const char *json, jsmntok_t *t, size_t *outlen, int *alloc) {
+/* Decode a jsmn string token's JSON escapes into a NUL-less buffer.
+ * Returns a pointer suitable for sbuf->value/length. The common
+ * escape-free case is returned as a direct slice of the original json
+ * buffer, no copy; otherwise the copy is allocated from `pool` -- no
+ * caller-side free, `pool` is destroyed as a whole once rendering ends. */
+static const char *decode_string(ngx_pool_t *pool, const char *json, jsmntok_t *t, size_t *outlen) {
     const char *s = json + t->start;
     int len = tok_len(t), i;
     char *out, *o;
-    *alloc = 0;
     for (i = 0; i < len; i++)
         if (s[i] == '\\')
             break;
@@ -108,7 +111,7 @@ static const char *decode_string(const char *json, jsmntok_t *t, size_t *outlen,
         *outlen = (size_t) len;
         return s;
     }
-    out = malloc((size_t) len ? (size_t) len : 1);
+    out = ngx_pnalloc(pool, (size_t) len ? (size_t) len : 1);
     if (!out) { *outlen = 0; return ""; }
     o = out;
     for (i = 0; i < len; i++) {
@@ -124,27 +127,16 @@ static const char *decode_string(const char *json, jsmntok_t *t, size_t *outlen,
             case 'r': *o++ = '\r'; break;
             case 't': *o++ = '\t'; break;
             case 'u': {
-                unsigned cp = 0, k;
+                unsigned cp = 0;
+                ngx_int_t hi, lo;
                 if (i + 4 < len) {
-                    for (k = 1; k <= 4; k++) {
-                        char c = s[i + k];
-                        cp <<= 4;
-                        if (c >= '0' && c <= '9') cp |= (unsigned) (c - '0');
-                        else if (c >= 'a' && c <= 'f') cp |= (unsigned) (c - 'a' + 10);
-                        else if (c >= 'A' && c <= 'F') cp |= (unsigned) (c - 'A' + 10);
-                    }
+                    hi = ngx_hextoi((u_char *) s + i + 1, 4);
+                    cp = hi >= 0 ? (unsigned) hi : 0;
                     i += 4;
                     if (cp >= 0xd800 && cp <= 0xdbff && i + 6 < len && s[i + 1] == '\\' && s[i + 2] == 'u') {
-                        unsigned lo = 0;
-                        for (k = 3; k <= 6; k++) {
-                            char c = s[i + k];
-                            lo <<= 4;
-                            if (c >= '0' && c <= '9') lo |= (unsigned) (c - '0');
-                            else if (c >= 'a' && c <= 'f') lo |= (unsigned) (c - 'a' + 10);
-                            else if (c >= 'A' && c <= 'F') lo |= (unsigned) (c - 'A' + 10);
-                        }
+                        lo = ngx_hextoi((u_char *) s + i + 3, 4);
                         if (lo >= 0xdc00 && lo <= 0xdfff) {
-                            cp = 0x10000 + ((cp - 0xd800) << 10) + (lo - 0xdc00);
+                            cp = 0x10000 + ((cp - 0xd800) << 10) + ((unsigned) lo - 0xdc00);
                             i += 6;
                         }
                     }
@@ -169,7 +161,6 @@ static const char *decode_string(const char *json, jsmntok_t *t, size_t *outlen,
         }
     }
     *outlen = (size_t) (o - out);
-    *alloc = 1;
     return out;
 }
 
@@ -186,7 +177,7 @@ static int compare(void *closure, const char *value) {
     jsmntok_t *t;
     const char *s;
     size_t slen;
-    int alloc, c;
+    int c;
     size_t vlen, minlen;
     if (e->selection < 0) return strcmp("", value);
     t = &e->tokens[e->selection];
@@ -198,12 +189,11 @@ static int compare(void *closure, const char *value) {
             if (tok_len(t) == 4 && !memcmp(s, "null", 4)) return strcmp("null", value);
             { double d = atof(s) - atof(value); return d < 0 ? -1 : d > 0 ? 1 : 0; }
         case JSMN_STRING:
-            s = decode_string(e->json, t, &slen, &alloc);
+            s = decode_string(e->pool, e->json, t, &slen);
             vlen = strlen(value);
             minlen = slen < vlen ? slen : vlen;
             c = minlen ? memcmp(s, value, minlen) : 0;
             if (c == 0) c = (int) slen - (int) vlen;
-            if (alloc) free((void *) s);
             return c < 0 ? -1 : c > 0 ? 1 : 0;
         default:
             return 1;
@@ -318,16 +308,14 @@ static int get(void *closure, struct mustach_sbuf *sbuf, int key) {
     jsmntok_t *t;
     const char *s;
     size_t slen;
-    int alloc;
     if (key) {
         int d, k = -1;
         for (d = e->depth; d >= 0; d--)
             if (e->stack[d].is_objiter) { k = e->stack[d].key; break; }
         if (k >= 0) {
-            s = decode_string(e->json, &e->tokens[k], &slen, &alloc);
+            s = decode_string(e->pool, e->json, &e->tokens[k], &slen);
             sbuf->value = s;
             sbuf->length = slen;
-            if (alloc) sbuf->freecb = free;
         } else {
             sbuf->value = "";
             sbuf->length = 0;
@@ -342,10 +330,9 @@ static int get(void *closure, struct mustach_sbuf *sbuf, int key) {
     t = &e->tokens[e->selection];
     switch (t->type) {
         case JSMN_STRING:
-            s = decode_string(e->json, t, &slen, &alloc);
+            s = decode_string(e->pool, e->json, t, &slen);
             sbuf->value = s;
             sbuf->length = slen;
-            if (alloc) sbuf->freecb = free;
             break;
         case JSMN_PRIMITIVE:
             if (tok_len(t) == 4 && !memcmp(e->json + t->start, "null", 4)) {
@@ -382,23 +369,27 @@ static const struct mustach_wrap_itf mustach_jsmn_wrap_itf = {
 int mustach_process_jsmn(const char *template, size_t length, const char *json, size_t jsonlen, int flags, FILE *file, char **err) {
     jsmn_parser p;
     jsmntok_t *tokens;
+    ngx_pool_t *pool;
     int ntok, rc;
     struct expl e;
 
     if (!jsonlen) { json = "{}"; jsonlen = 2; }
 
-    jsmn_init(&p);
-    ntok = jsmn_parse(&p, json, jsonlen, NULL, 0);
-    if (ntok < 0) { *err = "invalid json"; fclose(file); return MUSTACH_ERROR_USER(1); }
-    if (!(tokens = malloc((size_t) (ntok ? ntok : 1) * sizeof(*tokens)))) { fclose(file); return MUSTACH_ERROR_SYSTEM; }
+    if (!(pool = ngx_create_pool(ngx_pagesize, ngx_cycle->log))) { fclose(file); return MUSTACH_ERROR_SYSTEM; }
 
     jsmn_init(&p);
-    if (jsmn_parse(&p, json, jsonlen, tokens, (unsigned) ntok) < 0) { free(tokens); *err = "invalid json"; fclose(file); return MUSTACH_ERROR_USER(1); }
+    ntok = jsmn_parse(&p, json, jsonlen, NULL, 0);
+    if (ntok < 0) { ngx_destroy_pool(pool); *err = "invalid json"; fclose(file); return MUSTACH_ERROR_USER(1); }
+    if (!(tokens = ngx_palloc(pool, (size_t) (ntok ? ntok : 1) * sizeof(*tokens)))) { ngx_destroy_pool(pool); fclose(file); return MUSTACH_ERROR_SYSTEM; }
+
+    jsmn_init(&p);
+    if (jsmn_parse(&p, json, jsonlen, tokens, (unsigned) ntok) < 0) { ngx_destroy_pool(pool); *err = "invalid json"; fclose(file); return MUSTACH_ERROR_USER(1); }
 
     e.json = json;
     e.tokens = tokens;
+    e.pool = pool;
     rc = mustach_wrap_file(template, length, &mustach_jsmn_wrap_itf, &e, flags, file);
-    free(tokens);
+    ngx_destroy_pool(pool);
     fclose(file);
     return rc;
 }
