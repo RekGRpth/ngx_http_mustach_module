@@ -31,17 +31,6 @@ It can work two ways:
 - Overrides the `Content-Type` of the rendered response (e.g. `mustach_content text/html;`). Without it, the usual nginx `Content-Type` resolution applies (MIME type by extension, then `default_type`).
 - Inherited by nested locations unless overridden.
 
-### mustach_type
-
-- **syntax:** `mustach_type cjson | jansson | json-c | jsmn;`
-- **default:** `jsmn`
-- **context:** `http`, `server`, `location`, `if in location`
-- Selects the JSON backend used to parse the data and drive the template.
-  - `jsmn` — vendored header-only tokenizer ([jsmn.h](jsmn.h)), no external library dependency, no risk of the symbol clashes described below.
-  - `json-c`, `cjson`, `jansson` — bind to the system `libjson-c`/`libcjson`/`libjansson`.
-- `jansson` is only safe to use if `libmustach` was **not** also linked against `json-c` in the same shared object: `json-c`'s `json_object_get(obj)` (refcount increment) and `jansson`'s own `json_object_get(obj, key)` (field lookup) share a symbol name, and if both libraries end up in one `.so`, the dynamic linker resolves every call to one of them process-wide — silently breaking whichever one loses, regardless of which backend a given request actually asked for. Check `mustach_type jansson` actually resolves a nested field (not the whole document) before relying on it in a build where `libmustach` bundles more than one JSON backend.
-- Inherited by nested locations unless overridden.
-
 ### mustach_flags
 
 - **syntax:** `mustach_flags flag ...;`
@@ -88,7 +77,7 @@ Whatever `backend` returns is only rewritten if it comes back as `application/js
 
 Add it with `--add-module=path/to/ngx_http_mustach_module` (static) or `--add-dynamic-module=path/to/ngx_http_mustach_module` (dynamic) to nginx's `configure`.
 
-The build always requires [libmustach](https://gitlab.com/jobol/mustach) itself. The `json-c`/`cjson`/`jansson` backends each detect their library's headers (`json-c`, `libcjson`, `libjansson`) at compile time and fall back to a stub that errors out at request time if the corresponding header isn't found, so the module still builds without any of them installed — only `mustach_type` values backed by a missing library become unusable. `jsmn` needs nothing beyond what's vendored in this repository ([jsmn.h](jsmn.h)) and is unaffected either way.
+The build always requires [libmustach](https://gitlab.com/jobol/mustach) itself, plus the vendored header-only JSON tokenizer ([jsmn.h](jsmn.h)) — no other JSON library needed.
 
 ## Testing
 
