@@ -39,6 +39,14 @@ It can work two ways:
 - Selects which [mustach extensions](https://gitlab.com/jobol/mustach) are active, as a space-separated list of: `allextensions`, `colon`, `compare`, `emptytag`, `equal`, `errorundefined`, `escfirstcmp`, `incpartial`, `jsonpointer`, `noextensions`, `objectiter`, `partialdatafirst`, `singledot`.
 - Can only be given once per location (a second `mustach_flags` in the same location is a configuration error); inherited by nested locations that don't set their own.
 
+### mustach_template_cache
+
+- **syntax:** `mustach_template_cache <number>;`
+- **default:** `256`
+- **context:** `http`
+- Templates are compiled once and reused rather than reparsed on every request. A literal `mustach_template` is compiled once at config load. A `mustach_template` sourced from a variable can differ per request, so compiled templates are kept in a bounded, per-worker LRU cache instead — this directive sets that cache's capacity (number of distinct compiled templates it holds at once). Doesn't apply to literal templates, which aren't cached this way in the first place.
+- Can only be given once for the whole `http` block (a second `mustach_template_cache` is a configuration error).
+
 ## Examples
 
 ### Content-handler mode

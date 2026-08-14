@@ -18,6 +18,7 @@ typedef struct {
 
 typedef struct {
     ngx_flag_t enable;
+    ngx_int_t cache_size;
 } ngx_http_mustach_main_t;
 
 typedef struct {
@@ -104,7 +105,6 @@ static void ngx_http_mustach_log_error(ngx_http_request_t *r, int rc, const char
  * own open_file_cache makes. Bounded by an LRU so an attacker-controlled
  * variable can't grow it without limit. */
 #define NGX_HTTP_MUSTACH_CACHE_BUCKETS 61
-#define NGX_HTTP_MUSTACH_CACHE_MAX     256
 
 typedef struct ngx_http_mustach_cache_entry_s ngx_http_mustach_cache_entry_t;
 
@@ -143,6 +143,7 @@ static void ngx_http_mustach_cache_free_entry(ngx_http_mustach_cache_entry_t *e)
 }
 
 static ngx_int_t ngx_http_mustach_cache_get(ngx_http_request_t *r, ngx_str_t text, ngx_uint_t flags, mustach_template_t **out) {
+    ngx_http_mustach_main_t *main = ngx_http_get_module_main_conf(r, ngx_http_mustach_module);
     ngx_http_mustach_cache_entry_t *e, *victim, **pp;
     ngx_uint_t bflags = 0, bucket, vbucket;
     uint32_t hash;
@@ -183,7 +184,7 @@ static ngx_int_t ngx_http_mustach_cache_get(ngx_http_request_t *r, ngx_str_t tex
     ngx_http_mustach_cache_push_front(e);
     ngx_http_mustach_cache_count++;
 
-    if (ngx_http_mustach_cache_count > NGX_HTTP_MUSTACH_CACHE_MAX) {
+    if ((ngx_int_t) ngx_http_mustach_cache_count > main->cache_size) {
         victim = ngx_http_mustach_cache_lru_tail;
         ngx_http_mustach_cache_unlink_lru(victim);
         vbucket = (victim->hash ^ victim->bflags) % NGX_HTTP_MUSTACH_CACHE_BUCKETS;
@@ -292,13 +293,26 @@ static ngx_command_t ngx_http_mustach_commands[] = {
     .conf = NGX_HTTP_LOC_CONF_OFFSET,
     .offset = offsetof(ngx_http_mustach_location_t, template),
     .post = NULL },
+  { .name = ngx_string("mustach_template_cache"),
+    .type = NGX_HTTP_MAIN_CONF|NGX_CONF_TAKE1,
+    .set = ngx_conf_set_num_slot,
+    .conf = NGX_HTTP_MAIN_CONF_OFFSET,
+    .offset = offsetof(ngx_http_mustach_main_t, cache_size),
+    .post = NULL },
     ngx_null_command
 };
 
 static void *ngx_http_mustach_create_main_conf(ngx_conf_t *cf) {
     ngx_http_mustach_main_t *main = ngx_pcalloc(cf->pool, sizeof(*main));
     if (!main) return NULL;
+    main->cache_size = NGX_CONF_UNSET;
     return main;
+}
+
+static char *ngx_http_mustach_init_main_conf(ngx_conf_t *cf, void *conf) {
+    ngx_http_mustach_main_t *main = conf;
+    ngx_conf_init_value(main->cache_size, 256);
+    return NGX_CONF_OK;
 }
 
 static void *ngx_http_mustach_create_loc_conf(ngx_conf_t *cf) {
@@ -412,7 +426,7 @@ static ngx_http_module_t ngx_http_mustach_ctx = {
     .preconfiguration = NULL,
     .postconfiguration = ngx_http_mustach_postconfiguration,
     .create_main_conf = ngx_http_mustach_create_main_conf,
-    .init_main_conf = NULL,
+    .init_main_conf = ngx_http_mustach_init_main_conf,
     .create_srv_conf = NULL,
     .merge_srv_conf = NULL,
     .create_loc_conf = ngx_http_mustach_create_loc_conf,
