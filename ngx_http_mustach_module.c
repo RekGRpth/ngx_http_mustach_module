@@ -8,7 +8,8 @@
 #include <mustach/mustach.h>
 #include <mustach/mustach-wrap.h>
 
-int mustach_process_jsmn(const char *template, size_t length, const char *json, size_t jsonlen, int flags, FILE *file, char **err, ngx_pool_t *pool);
+int mustach_build_jsmn(const char *template, size_t length, int flags, mustach_template_t **templ, char **err);
+int mustach_apply_jsmn(mustach_template_t *templ, const char *json, size_t jsonlen, int flags, FILE *file, char **err, ngx_pool_t *pool);
 
 typedef struct {
     ngx_chain_t *cl;
@@ -24,6 +25,7 @@ typedef struct {
     ngx_http_complex_value_t *json;
     ngx_http_complex_value_t *template;
     ngx_uint_t flags;
+    mustach_template_t *compiled; /* set when `template` is a constant, built once at config time */
 } ngx_http_mustach_location_t;
 
 ngx_module_t ngx_http_mustach_module;
@@ -60,6 +62,141 @@ static char *ngx_http_mustach_flags_conf(ngx_conf_t *cf, ngx_command_t *cmd, voi
     return NGX_CONF_OK;
 }
 
+static void ngx_http_mustach_log_error(ngx_http_request_t *r, int rc, const char *err) {
+    switch (rc) {
+        case MUSTACH_OK: return;
+        case MUSTACH_ERROR_SYSTEM: ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "MUSTACH_ERROR_SYSTEM"); return;
+        case MUSTACH_ERROR_UNEXPECTED_END: ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "MUSTACH_ERROR_UNEXPECTED_END"); return;
+        case MUSTACH_ERROR_EMPTY_TAG: ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "MUSTACH_ERROR_EMPTY_TAG"); return;
+#if MUSTACH_VERSION >= 200
+        case MUSTACH_ERROR_TOO_BIG: ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "MUSTACH_ERROR_TOO_BIG"); return;
+#else
+        case MUSTACH_ERROR_TAG_TOO_LONG: ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "MUSTACH_ERROR_TAG_TOO_LONG"); return;
+#endif
+#if MUSTACH_VERSION >= 200
+        case MUSTACH_ERROR_BAD_DELIMITER: ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "MUSTACH_ERROR_BAD_DELIMITER"); return;
+#else
+        case MUSTACH_ERROR_BAD_SEPARATORS: ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "MUSTACH_ERROR_BAD_SEPARATORS"); return;
+#endif
+        case MUSTACH_ERROR_TOO_DEEP: ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "MUSTACH_ERROR_TOO_DEEP"); return;
+        case MUSTACH_ERROR_CLOSING: ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "MUSTACH_ERROR_CLOSING"); return;
+        case MUSTACH_ERROR_BAD_UNESCAPE_TAG: ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "MUSTACH_ERROR_BAD_UNESCAPE_TAG"); return;
+        case MUSTACH_ERROR_INVALID_ITF: ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "MUSTACH_ERROR_INVALID_ITF"); return;
+#if MUSTACH_VERSION >= 200
+        case MUSTACH_ERROR_NOT_FOUND: ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "MUSTACH_ERROR_NOT_FOUND"); return;
+#else
+        case MUSTACH_ERROR_ITEM_NOT_FOUND: ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "MUSTACH_ERROR_ITEM_NOT_FOUND"); return;
+        case MUSTACH_ERROR_PARTIAL_NOT_FOUND: ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "MUSTACH_ERROR_PARTIAL_NOT_FOUND"); return;
+#endif
+        case MUSTACH_ERROR_UNDEFINED_TAG: ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "MUSTACH_ERROR_UNDEFINED_TAG"); return;
+        case MUSTACH_ERROR_TOO_MUCH_NESTING: ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "MUSTACH_ERROR_TOO_MUCH_NESTING"); return;
+#if MUSTACH_VERSION >= 200
+        case MUSTACH_ERROR_OUT_OF_MEMORY: ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "MUSTACH_ERROR_OUT_OF_MEMORY"); return;
+#endif
+        default: ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "%s", err); return;
+    }
+}
+
+/* Per-worker cache of compiled templates, for the case where `mustach_template`
+ * comes from a variable and so can differ per request. Plain process memory,
+ * no locking: each worker is single-threaded, and a cold cache after reload
+ * (a new worker starts with none of this) is fine -- same tradeoff nginx's
+ * own open_file_cache makes. Bounded by an LRU so an attacker-controlled
+ * variable can't grow it without limit. */
+#define NGX_HTTP_MUSTACH_CACHE_BUCKETS 61
+#define NGX_HTTP_MUSTACH_CACHE_MAX     256
+
+typedef struct ngx_http_mustach_cache_entry_s ngx_http_mustach_cache_entry_t;
+
+struct ngx_http_mustach_cache_entry_s {
+    ngx_http_mustach_cache_entry_t *hnext;
+    ngx_http_mustach_cache_entry_t *lru_prev;
+    ngx_http_mustach_cache_entry_t *lru_next;
+    uint32_t hash;
+    ngx_uint_t bflags;
+    ngx_str_t text;
+    mustach_template_t *compiled;
+};
+
+static ngx_http_mustach_cache_entry_t *ngx_http_mustach_cache_buckets[NGX_HTTP_MUSTACH_CACHE_BUCKETS];
+static ngx_http_mustach_cache_entry_t *ngx_http_mustach_cache_lru_head;
+static ngx_http_mustach_cache_entry_t *ngx_http_mustach_cache_lru_tail;
+static ngx_uint_t ngx_http_mustach_cache_count;
+
+static void ngx_http_mustach_cache_unlink_lru(ngx_http_mustach_cache_entry_t *e) {
+    if (e->lru_prev) e->lru_prev->lru_next = e->lru_next; else ngx_http_mustach_cache_lru_head = e->lru_next;
+    if (e->lru_next) e->lru_next->lru_prev = e->lru_prev; else ngx_http_mustach_cache_lru_tail = e->lru_prev;
+}
+
+static void ngx_http_mustach_cache_push_front(ngx_http_mustach_cache_entry_t *e) {
+    e->lru_prev = NULL;
+    e->lru_next = ngx_http_mustach_cache_lru_head;
+    if (ngx_http_mustach_cache_lru_head) ngx_http_mustach_cache_lru_head->lru_prev = e;
+    ngx_http_mustach_cache_lru_head = e;
+    if (!ngx_http_mustach_cache_lru_tail) ngx_http_mustach_cache_lru_tail = e;
+}
+
+static void ngx_http_mustach_cache_free_entry(ngx_http_mustach_cache_entry_t *e) {
+    mustach_destroy_template(e->compiled, NULL, NULL);
+    ngx_free(e->text.data);
+    ngx_free(e);
+}
+
+static ngx_int_t ngx_http_mustach_cache_get(ngx_http_request_t *r, ngx_str_t text, ngx_uint_t flags, mustach_template_t **out) {
+    ngx_http_mustach_cache_entry_t *e, *victim, **pp;
+    ngx_uint_t bflags = 0, bucket, vbucket;
+    uint32_t hash;
+    char *err;
+    int rc;
+    mustach_template_t *compiled;
+    u_char *data;
+
+    if (flags & Mustach_With_Colon) bflags |= 1;
+    if (flags & Mustach_With_EmptyTag) bflags |= 2;
+
+    hash = ngx_crc32_long(text.data, text.len);
+    bucket = (hash ^ bflags) % NGX_HTTP_MUSTACH_CACHE_BUCKETS;
+
+    for (e = ngx_http_mustach_cache_buckets[bucket]; e; e = e->hnext) {
+        if (e->hash == hash && e->bflags == bflags && e->text.len == text.len && !ngx_memcmp(e->text.data, text.data, text.len)) {
+            if (e != ngx_http_mustach_cache_lru_head) {
+                ngx_http_mustach_cache_unlink_lru(e);
+                ngx_http_mustach_cache_push_front(e);
+            }
+            *out = e->compiled;
+            return NGX_OK;
+        }
+    }
+
+    if ((rc = mustach_build_jsmn((const char *)text.data, text.len, flags, &compiled, &err)) != MUSTACH_OK) { ngx_http_mustach_log_error(r, rc, err); return NGX_ERROR; }
+    if (!(e = ngx_alloc(sizeof(*e), r->connection->log))) { mustach_destroy_template(compiled, NULL, NULL); return NGX_ERROR; }
+    if (!(data = ngx_alloc(text.len ? text.len : 1, r->connection->log))) { ngx_free(e); mustach_destroy_template(compiled, NULL, NULL); return NGX_ERROR; }
+    ngx_memcpy(data, text.data, text.len);
+
+    e->hash = hash;
+    e->bflags = bflags;
+    e->text.data = data;
+    e->text.len = text.len;
+    e->compiled = compiled;
+    e->hnext = ngx_http_mustach_cache_buckets[bucket];
+    ngx_http_mustach_cache_buckets[bucket] = e;
+    ngx_http_mustach_cache_push_front(e);
+    ngx_http_mustach_cache_count++;
+
+    if (ngx_http_mustach_cache_count > NGX_HTTP_MUSTACH_CACHE_MAX) {
+        victim = ngx_http_mustach_cache_lru_tail;
+        ngx_http_mustach_cache_unlink_lru(victim);
+        vbucket = (victim->hash ^ victim->bflags) % NGX_HTTP_MUSTACH_CACHE_BUCKETS;
+        for (pp = &ngx_http_mustach_cache_buckets[vbucket]; *pp != victim; pp = &(*pp)->hnext);
+        *pp = victim->hnext;
+        ngx_http_mustach_cache_free_entry(victim);
+        ngx_http_mustach_cache_count--;
+    }
+
+    *out = compiled;
+    return NGX_OK;
+}
+
 static ngx_buf_t *ngx_http_mustach_process(ngx_http_request_t *r, ngx_str_t json) {
     ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "%s", __func__);
     ngx_http_clear_accept_ranges(r);
@@ -69,46 +206,22 @@ static ngx_buf_t *ngx_http_mustach_process(ngx_http_request_t *r, ngx_str_t json
     if (location->content && ngx_http_complex_value(r, location->content, &r->headers_out.content_type) != NGX_OK) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_http_complex_value != NGX_OK"); return NULL; }
     if (ngx_http_set_content_type(r) != NGX_OK) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_http_set_content_type != NGX_OK"); return NULL; }
     r->headers_out.content_type_len = r->headers_out.content_type.len;
-    ngx_str_t template;
-    if (ngx_http_complex_value(r, location->template, &template) != NGX_OK) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_http_complex_value != NGX_OK"); return NULL; }
-    if (!template.len) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!template.len"); return NULL; }
+    mustach_template_t *templ;
+    if (location->compiled) {
+        templ = location->compiled;
+    } else {
+        ngx_str_t template;
+        if (ngx_http_complex_value(r, location->template, &template) != NGX_OK) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_http_complex_value != NGX_OK"); return NULL; }
+        if (!template.len) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!template.len"); return NULL; }
+        if (ngx_http_mustach_cache_get(r, template, location->flags, &templ) != NGX_OK) return NULL;
+    }
     ngx_str_t output = ngx_null_string;
     FILE *out = open_memstream((char **)&output.data, &output.len);
     if (!out) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!open_memstream"); return NULL; }
     ngx_buf_t *b = NULL;
     char *err;
-    switch (mustach_process_jsmn((const char *)template.data, template.len, (const char *)json.data, json.len, location->flags, out, &err, r->pool)) {
-        case MUSTACH_OK: break;
-        case MUSTACH_ERROR_SYSTEM: ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "MUSTACH_ERROR_SYSTEM"); goto free;
-        case MUSTACH_ERROR_UNEXPECTED_END: ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "MUSTACH_ERROR_UNEXPECTED_END"); goto free;
-        case MUSTACH_ERROR_EMPTY_TAG: ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "MUSTACH_ERROR_EMPTY_TAG"); goto free;
-#if MUSTACH_VERSION >= 200
-        case MUSTACH_ERROR_TOO_BIG: ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "MUSTACH_ERROR_TOO_BIG"); goto free;
-#else
-        case MUSTACH_ERROR_TAG_TOO_LONG: ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "MUSTACH_ERROR_TAG_TOO_LONG"); goto free;
-#endif
-#if MUSTACH_VERSION >= 200
-        case MUSTACH_ERROR_BAD_DELIMITER: ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "MUSTACH_ERROR_BAD_DELIMITER"); goto free;
-#else
-        case MUSTACH_ERROR_BAD_SEPARATORS: ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "MUSTACH_ERROR_BAD_SEPARATORS"); goto free;
-#endif
-        case MUSTACH_ERROR_TOO_DEEP: ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "MUSTACH_ERROR_TOO_DEEP"); goto free;
-        case MUSTACH_ERROR_CLOSING: ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "MUSTACH_ERROR_CLOSING"); goto free;
-        case MUSTACH_ERROR_BAD_UNESCAPE_TAG: ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "MUSTACH_ERROR_BAD_UNESCAPE_TAG"); goto free;
-        case MUSTACH_ERROR_INVALID_ITF: ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "MUSTACH_ERROR_INVALID_ITF"); goto free;
-#if MUSTACH_VERSION >= 200
-        case MUSTACH_ERROR_NOT_FOUND: ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "MUSTACH_ERROR_NOT_FOUND"); goto free;
-#else
-        case MUSTACH_ERROR_ITEM_NOT_FOUND: ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "MUSTACH_ERROR_ITEM_NOT_FOUND"); goto free;
-        case MUSTACH_ERROR_PARTIAL_NOT_FOUND: ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "MUSTACH_ERROR_PARTIAL_NOT_FOUND"); goto free;
-#endif
-        case MUSTACH_ERROR_UNDEFINED_TAG: ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "MUSTACH_ERROR_UNDEFINED_TAG"); goto free;
-        case MUSTACH_ERROR_TOO_MUCH_NESTING: ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "MUSTACH_ERROR_TOO_MUCH_NESTING"); goto free;
-#if MUSTACH_VERSION >= 200
-        case MUSTACH_ERROR_OUT_OF_MEMORY: ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "MUSTACH_ERROR_OUT_OF_MEMORY"); goto free;
-#endif
-        default: ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "%s", err); goto free;
-    }
+    int rc = mustach_apply_jsmn(templ, (const char *)json.data, json.len, location->flags, out, &err, r->pool);
+    if (rc != MUSTACH_OK) { ngx_http_mustach_log_error(r, rc, err); goto free; }
     if (!(b = ngx_create_temp_buf(r->pool, output.len))) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!ngx_create_temp_buf"); goto free; }
     b->last_buf = 1;
     b->last = ngx_copy(b->last, output.data, output.len);
@@ -203,6 +316,13 @@ static char *ngx_http_mustach_merge_loc_conf(ngx_conf_t *cf, void *parent, void 
     if (!conf->template) conf->template = prev->template;
     if (conf->json && !conf->template) { ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, "\"mustach_json\" requires \"mustach_template\" to be set in the same location"); return NGX_CONF_ERROR; }
     ngx_conf_merge_uint_value(conf->flags, prev->flags, Mustach_With_AllExtensions);
+    if (conf->template && conf->template->lengths == NULL && conf->template->value.len) {
+        char *err;
+        if (mustach_build_jsmn((const char *)conf->template->value.data, conf->template->value.len, conf->flags, &conf->compiled, &err) != MUSTACH_OK) {
+            ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, "\"mustach_template\" error: %s", err);
+            return NGX_CONF_ERROR;
+        }
+    }
     return NGX_CONF_OK;
 }
 

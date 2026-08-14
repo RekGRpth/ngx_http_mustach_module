@@ -6,12 +6,14 @@
 
 #include <mustach/mustach.h>
 #include <mustach/mustach-wrap.h>
+#include <mustach/mustach-helpers.h>
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-int mustach_process_jsmn(const char *template, size_t length, const char *json, size_t jsonlen, int flags, FILE *file, char **err, ngx_pool_t *pool);
+int mustach_build_jsmn(const char *template, size_t length, int flags, mustach_template_t **templ, char **err);
+int mustach_apply_jsmn(mustach_template_t *templ, const char *json, size_t jsonlen, int flags, FILE *file, char **err, ngx_pool_t *pool);
 
 struct frame {
     int container;   /* token index of the array being iterated, or -1 */
@@ -366,7 +368,24 @@ static const struct mustach_wrap_itf mustach_jsmn_wrap_itf = {
     .get = get
 };
 
-int mustach_process_jsmn(const char *template, size_t length, const char *json, size_t jsonlen, int flags, FILE *file, char **err, ngx_pool_t *pool) {
+/* Parses (compiles) a mustache template into a reusable mustach_template_t.
+ * The returned template holds slices into `template`/`length`, so that
+ * buffer must outlive it -- no copy is made here. Only the two build-time
+ * flags (colon, emptytag) affect the compiled tree; the rest of `flags`
+ * is applied per-render by mustach_apply_jsmn(). */
+int mustach_build_jsmn(const char *template, size_t length, int flags, mustach_template_t **templ, char **err) {
+    mustach_sbuf_t sbuf = { .value = template, .length = length };
+    int bflags = 0, rc;
+    if (flags & Mustach_With_Colon) bflags |= Mustach_Build_With_Colon;
+    if (flags & Mustach_With_EmptyTag) bflags |= Mustach_Build_With_EmptyTag;
+    rc = mustach_make_template(templ, bflags, &sbuf, NULL);
+    if (rc != MUSTACH_OK) *err = "invalid mustache template";
+    return rc;
+}
+
+/* Renders an already-compiled template against JSON data. Can be called
+ * repeatedly against the same `templ` for different JSON payloads. */
+int mustach_apply_jsmn(mustach_template_t *templ, const char *json, size_t jsonlen, int flags, FILE *file, char **err, ngx_pool_t *pool) {
     jsmn_parser p;
     jsmntok_t *tokens;
     int ntok, rc;
@@ -385,7 +404,7 @@ int mustach_process_jsmn(const char *template, size_t length, const char *json, 
     e.json = json;
     e.tokens = tokens;
     e.pool = pool;
-    rc = mustach_wrap_file(template, length, &mustach_jsmn_wrap_itf, &e, flags, file);
+    rc = mustach_wrap_apply(templ, &mustach_jsmn_wrap_itf, &e, flags, mustach_fwrite_cb, NULL, file);
     fclose(file);
     return rc;
 }
