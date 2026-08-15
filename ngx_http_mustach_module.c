@@ -169,10 +169,14 @@ static ngx_int_t ngx_http_mustach_cache_get(ngx_http_request_t *r, ngx_str_t tex
         }
     }
 
-    if ((rc = mustach_build_jsmn((const char *)text.data, text.len, flags, &compiled, &err)) != MUSTACH_OK) { ngx_http_mustach_log_error(r, rc, err); return NGX_ERROR; }
-    if (!(e = ngx_alloc(sizeof(*e), r->connection->log))) { mustach_destroy_template(compiled, NULL, NULL); return NGX_ERROR; }
-    if (!(data = ngx_alloc(text.len ? text.len : 1, r->connection->log))) { ngx_free(e); mustach_destroy_template(compiled, NULL, NULL); return NGX_ERROR; }
+    if (!(e = ngx_alloc(sizeof(*e), r->connection->log))) return NGX_ERROR;
+    if (!(data = ngx_alloc(text.len ? text.len : 1, r->connection->log))) { ngx_free(e); return NGX_ERROR; }
     ngx_memcpy(data, text.data, text.len);
+    /* compile from the cache's own copy: the compiled template keeps pointers
+     * into whatever buffer it's built from, and this copy -- unlike `text`,
+     * which may live in the request pool -- stays alive for as long as the
+     * cache entry does. */
+    if ((rc = mustach_build_jsmn((const char *)data, text.len, flags, &compiled, &err)) != MUSTACH_OK) { ngx_http_mustach_log_error(r, rc, err); ngx_free(data); ngx_free(e); return NGX_ERROR; }
 
     e->hash = hash;
     e->bflags = bflags;
