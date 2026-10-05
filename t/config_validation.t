@@ -25,7 +25,7 @@ __DATA__
 --- must_die
 --- suppress_stderr
 --- error_log
-"mustach_json" requires "mustach_template" to be set in the same location
+"mustach_json" requires "mustach_template", set here or inherited
 
 === TEST 2: mustach_json with mustach_template starts fine
 --- main_config

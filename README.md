@@ -19,10 +19,10 @@ It can work two ways:
 ### mustach_json
 
 - **syntax:** `mustach_json <text>;`
-- **context:** `http`, `server`, `location`, `if in location`
-- Sets the JSON data and switches the location into **content-handler mode**: this directive installs itself as the location's content handler, so the location no longer needs (or should have) another one like `proxy_pass` or `return`. Requires `mustach_template` to be set in the same location — the module refuses to start otherwise, rather than crashing on the first request.
+- **context:** `location`, `if in location`
+- Sets the JSON data and switches the location into **content-handler mode**: this directive installs itself as the location's content handler, so the location no longer needs (or should have) another one like `proxy_pass` or `return`. Requires `mustach_template`, set in the same location or inherited — the module refuses to start otherwise, rather than crashing on the first request.
 - Combining `mustach_json` with another directive that already claims the location's content handler (`proxy_pass`, `return`, ...) is a configuration error, whichever of the two is declared second.
-- Inherited by nested locations unless overridden.
+- Like `proxy_pass`, not inherited by nested locations: each location that should render needs its own `mustach_json`. (Blocks such as `if` and `limit_except` inside the location do keep it.)
 
 ### mustach_content
 

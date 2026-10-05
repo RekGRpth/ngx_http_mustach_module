@@ -270,13 +270,14 @@ free:
 
 static ngx_int_t ngx_http_mustach_handler(ngx_http_request_t *r) {
     ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "%s", __func__);
+    ngx_http_mustach_location_t *location = ngx_http_get_module_loc_conf(r, ngx_http_mustach_module);
+    if (!location->json) return NGX_DECLINED;
     ngx_int_t rc = ngx_http_discard_request_body(r);
     if (rc != NGX_OK && rc != NGX_AGAIN) return rc;
     ngx_http_mustach_context_t *context = ngx_pcalloc(r->pool, sizeof(*context));
     if (!context) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!ngx_pcalloc"); return NGX_HTTP_INTERNAL_SERVER_ERROR; }
     context->done = 1; /* rendered right here: keep the filters off this response */
     ngx_http_set_ctx(r, context, ngx_http_mustach_module);
-    ngx_http_mustach_location_t *location = ngx_http_get_module_loc_conf(r, ngx_http_mustach_module);
     ngx_str_t json;
     if (ngx_http_complex_value(r, location->json, &json) != NGX_OK) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_http_complex_value != NGX_OK"); return NGX_HTTP_INTERNAL_SERVER_ERROR; }
     ngx_chain_t cl = {.buf = ngx_http_mustach_process(r, json), .next = NULL};
@@ -322,7 +323,7 @@ static ngx_command_t ngx_http_mustach_commands[] = {
     .offset = offsetof(ngx_http_mustach_location_t, flags),
     .post = NULL },
   { .name = ngx_string("mustach_json"),
-    .type = NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_HTTP_LIF_CONF|NGX_CONF_TAKE1,
+    .type = NGX_HTTP_LOC_CONF|NGX_HTTP_LIF_CONF|NGX_CONF_TAKE1,
     .set = ngx_http_set_complex_value_slot_handler,
     .conf = NGX_HTTP_LOC_CONF_OFFSET,
     .offset = offsetof(ngx_http_mustach_location_t, json),
@@ -372,10 +373,16 @@ static char *ngx_http_mustach_merge_loc_conf(ngx_conf_t *cf, void *parent, void 
     ngx_http_mustach_location_t *prev = parent;
     ngx_http_mustach_location_t *conf = child;
     if (!conf->content) conf->content = prev->content;
-    if (!conf->json) conf->json = prev->json;
+    /* like proxy_pass: a content handler isn't inherited by nested locations,
+     * only by the unnamed ones (if, limit_except) where the enclosing
+     * location's handler keeps running with their configuration */
+    ngx_http_core_loc_conf_t *core = ngx_http_conf_get_module_loc_conf(cf, ngx_http_core_module);
+    if (!conf->json && core->noname) conf->json = prev->json;
+    /* limit_except, unlike if, takes the content handler from its own conf */
+    if (conf->json && core->lmt_excpt && !core->handler) core->handler = ngx_http_mustach_handler;
     if (!conf->template) conf->template = prev->template;
     ngx_conf_merge_str_value(conf->partials, prev->partials, "");
-    if (conf->json && !conf->template) { ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, "\"mustach_json\" requires \"mustach_template\" to be set in the same location"); return NGX_CONF_ERROR; }
+    if (conf->json && !conf->template) { ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, "\"mustach_json\" requires \"mustach_template\", set here or inherited"); return NGX_CONF_ERROR; }
     ngx_conf_merge_uint_value(conf->flags, prev->flags, Mustach_With_AllExtensions);
     if (conf->template && conf->template->lengths == NULL && conf->template->value.len) {
         /* an inherited template with the same build-time flags: share the
