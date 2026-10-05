@@ -237,6 +237,7 @@ Larry45
     location /test {
         default_type application/json;
         mustach_template '{{#peeps}}{{>variables}}{{/peeps}}';
+        mustach_partials_root ../..;
         mustach_content text/html;
         return 200 '{
     "peeps": [
@@ -265,6 +266,7 @@ Hello Moe! You have 15 new messages.Hello Larry! You have 5 new messages.Hello C
     location /test {
         default_type application/json;
         mustach_template '{{name}}{{#kids}}{{>recursion}}{{/kids}}';
+        mustach_partials_root ../..;
         mustach_content text/html;
         return 200 '{
     "name": "1",

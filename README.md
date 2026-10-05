@@ -39,6 +39,16 @@ It can work two ways:
 - Selects which [mustach extensions](https://gitlab.com/jobol/mustach) are active, as a space-separated list of: `allextensions`, `colon`, `compare`, `emptytag`, `equal`, `errorundefined`, `escfirstcmp`, `incpartial`, `jsonpointer`, `noextensions`, `objectiter`, `partialdatafirst`, `singledot`.
 - Can only be given once per location (a second `mustach_flags` in the same location is a configuration error); inherited by nested locations that don't set their own.
 
+### mustach_partials_root
+
+- **syntax:** `mustach_partials_root path;`
+- **default:** —
+- **context:** `http`, `server`, `location`, `if in location`
+- Lets partials (`{{> name}}`) be read from files in this directory: `path/name`, then `path/name.mustache`. A relative `path` is taken from the nginx prefix. `name` must be a single path component (no `/`, not `..`), so nothing outside the directory can be reached.
+- Partials always come from the JSON data too: by default the data is tried first, the directory second; without `partialdatafirst` in `mustach_flags`, the other way round. Without this directive, partials come from the data only and no file is ever read — note that a partial taken from the data is itself a template, so letting it name arbitrary files would let the JSON read them.
+- Files are read with blocking I/O on every render that uses them.
+- Inherited by nested locations unless overridden.
+
 ### mustach_template_cache
 
 - **syntax:** `mustach_template_cache <number>;`

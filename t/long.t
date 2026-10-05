@@ -398,6 +398,7 @@ Amed: 24/24/24
     location /test {
         default_type application/json;
         mustach_content text/html;
+        mustach_partials_root ../..;
         mustach_template ' =====================================
 from json
 {{> specia}}

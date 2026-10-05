@@ -14,7 +14,7 @@
 #include <string.h>
 
 int mustach_build_jsmn(const char *template, size_t length, int flags, mustach_template_t **templ, char **err);
-int mustach_apply_jsmn(mustach_template_t *templ, const char *json, size_t jsonlen, int flags, FILE *file, char **err, ngx_pool_t *pool);
+int mustach_apply_jsmn(mustach_template_t *templ, const char *json, size_t jsonlen, int flags, FILE *file, char **err, ngx_pool_t *pool, const ngx_str_t *partials);
 
 struct frame {
     int container;   /* token index of the array being iterated, or -1 */
@@ -32,6 +32,9 @@ struct expl {
     ngx_pool_t *pool;
     int selection;    /* token index, or -1 for "no value" */
     int depth;
+    int nested;       /* a get_partial() lookup: keep the caller's context */
+    int flags;
+    const ngx_str_t *partials; /* mustach_partials_root, or NULL */
     struct frame stack[MUSTACH_MAX_DEPTH];
 };
 
@@ -164,6 +167,7 @@ static const char *decode_string(ngx_pool_t *pool, const char *json, jsmntok_t *
 
 static int start(void *closure) {
     struct expl *e = closure;
+    if (e->nested) return MUSTACH_OK;
     e->depth = 0;
     e->stack[0].value = 0; /* token 0 is always the root */
     e->selection = 0;
@@ -376,6 +380,105 @@ static const struct mustach_wrap_itf mustach_jsmn_wrap_itf = {
     .get = get
 };
 
+/* The render in progress, for get_partial(): mustach_wrap_get_partial is a
+ * global hook and gets no closure. Workers render one request at a time. */
+static struct expl *partial_expl;
+
+/* Looks `name` up in the JSON data the way mustach-wrap itself does, by
+ * rendering {{&name}} against the current context, so names resolve as they
+ * always did: dots, JSON pointers, objiter keys. Returns 1 with the value in
+ * `sbuf` when it's not empty, 0 otherwise -- a missing name and an empty
+ * string can't be told apart this way. */
+static int partial_from_data(struct expl *e, const char *name, struct mustach_sbuf *sbuf) {
+    struct expl nested;
+    mustach_template_t *templ;
+    mustach_sbuf_t text = MUSTACH_SBUF_INIT;
+    char *tpl, *out = NULL, *copy;
+    size_t outlen = 0;
+    FILE *file;
+    int rc;
+    /* delimiters that can't clash with the name */
+    if (strchr(name, '\x01') || strchr(name, '\x02')) return 0;
+    if (!(tpl = ngx_pnalloc(e->pool, strlen(name) + sizeof("{{=\x01 \x02=}}\x01&\x02") - 1))) return MUSTACH_ERROR_SYSTEM;
+    text.value = tpl;
+    text.length = (size_t) (ngx_sprintf((u_char *) tpl, "{{=\x01 \x02=}}\x01&%s\x02", name) - (u_char *) tpl);
+    if (mustach_make_template(&templ, 0, &text, NULL) != MUSTACH_OK) return 0;
+    if (!(file = open_memstream(&out, &outlen))) { mustach_destroy_template(templ, NULL, NULL); return MUSTACH_ERROR_SYSTEM; }
+    nested = *e;
+    nested.nested = 1;
+    rc = mustach_wrap_apply(templ, &mustach_jsmn_wrap_itf, &nested, e->flags & ~Mustach_With_ErrorUndefined, mustach_fwrite_cb, NULL, file);
+    fclose(file);
+    mustach_destroy_template(templ, NULL, NULL);
+    if (rc != MUSTACH_OK) { free(out); return MUSTACH_ERROR_SYSTEM; }
+    if (!outlen) { free(out); return 0; }
+    if (!(copy = ngx_pnalloc(e->pool, outlen))) { free(out); return MUSTACH_ERROR_SYSTEM; }
+    ngx_memcpy(copy, out, outlen);
+    free(out);
+    sbuf->value = copy;
+    sbuf->length = outlen;
+    return 1;
+}
+
+/* Reads `name`, then `name`.mustache, from the mustach_partials_root
+ * directory, as mustach-wrap would from the working directory. `name` must
+ * be a single path component, so nothing outside that directory can be
+ * reached. Returns 1 with the contents in `sbuf`, 0 if there's no such
+ * file. */
+static int partial_from_file(struct expl *e, const char *name, struct mustach_sbuf *sbuf) {
+    size_t namelen = strlen(name);
+    ngx_file_info_t fi;
+    ngx_fd_t fd;
+    u_char *path, *p, *buf;
+    size_t size, got;
+    ssize_t n;
+    int i;
+    if (!e->partials || !namelen || strchr(name, '/') || !strcmp(name, ".") || !strcmp(name, "..")) return 0;
+    if (!(path = ngx_pnalloc(e->pool, e->partials->len + 1 + namelen + sizeof(".mustache")))) return MUSTACH_ERROR_SYSTEM;
+    p = ngx_sprintf(path, "%V/%s", e->partials, name);
+    for (i = 0; i < 2; i++) {
+        if (i) p = ngx_cpymem(p, ".mustache", sizeof(".mustache") - 1);
+        *p = '\0';
+        if ((fd = ngx_open_file(path, NGX_FILE_RDONLY, NGX_FILE_OPEN, 0)) == NGX_INVALID_FILE) continue;
+        if (ngx_fd_info(fd, &fi) == NGX_FILE_ERROR || !ngx_is_file(&fi)) { ngx_close_file(fd); continue; }
+        size = (size_t) ngx_file_size(&fi);
+        if (!(buf = ngx_pnalloc(e->pool, size ? size : 1))) { ngx_close_file(fd); return MUSTACH_ERROR_SYSTEM; }
+        for (got = 0; got < size; got += (size_t) n)
+            if ((n = ngx_read_fd(fd, buf + got, size - got)) <= 0) break;
+        ngx_close_file(fd);
+        if (got != size) return MUSTACH_ERROR_SYSTEM;
+        sbuf->value = size ? (const char *) buf : "";
+        sbuf->length = size;
+        return 1;
+    }
+    return 0;
+}
+
+/* The render in progress, for get_partial(): mustach_wrap_get_partial is a
+ * global hook and gets no closure. Workers render one request at a time. */
+static struct expl *partial_expl;
+
+/* Left to itself, mustach-wrap reads a partial it doesn't find in the data
+ * from `name` (then `name`.mustache) as a file path, relative to the working
+ * directory or absolute. And since a partial taken from the data is itself a
+ * template, the JSON alone could pull any file the worker can read into the
+ * response. This global hook runs before that, and never answering "not
+ * found" keeps the library from ever getting there: partials come from the
+ * data and, only when mustach_partials_root is set, from that directory --
+ * in the order Mustach_With_PartialDataFirst asks for. */
+static int get_partial(const char *name, struct mustach_sbuf *sbuf) {
+    struct expl *e = partial_expl;
+    int rc;
+    sbuf->value = "";
+    sbuf->length = 0;
+    if (!e) return MUSTACH_OK;
+    if (e->flags & Mustach_With_PartialDataFirst) {
+        if (!(rc = partial_from_data(e, name, sbuf))) rc = partial_from_file(e, name, sbuf);
+    } else {
+        if (!(rc = partial_from_file(e, name, sbuf))) rc = partial_from_data(e, name, sbuf);
+    }
+    return rc < 0 ? rc : MUSTACH_OK;
+}
+
 /* jsmn, strict or not, accepts object members without exactly one value --
  * {"a"}, {"a":}, {"a" "b"}, {"a":1 "b":2} -- while find_member() and objiter
  * take a member's value to be the token right after its key, and so walk off
@@ -421,7 +524,7 @@ int mustach_build_jsmn(const char *template, size_t length, int flags, mustach_t
 
 /* Renders an already-compiled template against JSON data. Can be called
  * repeatedly against the same `templ` for different JSON payloads. */
-int mustach_apply_jsmn(mustach_template_t *templ, const char *json, size_t jsonlen, int flags, FILE *file, char **err, ngx_pool_t *pool) {
+int mustach_apply_jsmn(mustach_template_t *templ, const char *json, size_t jsonlen, int flags, FILE *file, char **err, ngx_pool_t *pool, const ngx_str_t *partials) {
     jsmn_parser p;
     jsmntok_t *tokens;
     int ntok, rc;
@@ -442,7 +545,13 @@ int mustach_apply_jsmn(mustach_template_t *templ, const char *json, size_t jsonl
     e.json = json;
     e.tokens = tokens;
     e.pool = pool;
+    e.nested = 0;
+    e.flags = flags;
+    e.partials = partials;
+    mustach_wrap_get_partial = get_partial;
+    partial_expl = &e;
     rc = mustach_wrap_apply(templ, &mustach_jsmn_wrap_itf, &e, flags, mustach_fwrite_cb, NULL, file);
+    partial_expl = NULL;
     fclose(file);
     return rc;
 }
