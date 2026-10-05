@@ -142,6 +142,10 @@ static void ngx_http_mustach_cache_free_entry(ngx_http_mustach_cache_entry_t *e)
     ngx_free(e);
 }
 
+static void ngx_http_mustach_cleanup_template(void *data) {
+    mustach_destroy_template(data, NULL, NULL);
+}
+
 static ngx_int_t ngx_http_mustach_cache_get(ngx_http_request_t *r, ngx_str_t text, ngx_uint_t flags, mustach_template_t **out) {
     ngx_http_mustach_main_t *main = ngx_http_get_module_main_conf(r, ngx_http_mustach_module);
     ngx_http_mustach_cache_entry_t *e, *victim, **pp;
@@ -151,6 +155,19 @@ static ngx_int_t ngx_http_mustach_cache_get(ngx_http_request_t *r, ngx_str_t tex
     int rc;
     mustach_template_t *compiled;
     u_char *data;
+
+    /* mustach_template_cache 0: no caching, compile per request and free the
+     * template with the request pool -- `text` lives in that same pool, so it
+     * outlives the compiled template that points into it. */
+    if (!main->cache_size) {
+        ngx_pool_cleanup_t *cln;
+        if (!(cln = ngx_pool_cleanup_add(r->pool, 0))) return NGX_ERROR;
+        if ((rc = mustach_build_jsmn((const char *)text.data, text.len, flags, &compiled, &err)) != MUSTACH_OK) { ngx_http_mustach_log_error(r, rc, err); return NGX_ERROR; }
+        cln->handler = ngx_http_mustach_cleanup_template;
+        cln->data = compiled;
+        *out = compiled;
+        return NGX_OK;
+    }
 
     if (flags & Mustach_With_Colon) bflags |= 1;
     if (flags & Mustach_With_EmptyTag) bflags |= 2;

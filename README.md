@@ -44,7 +44,7 @@ It can work two ways:
 - **syntax:** `mustach_template_cache <number>;`
 - **default:** `256`
 - **context:** `http`
-- Templates are compiled once and reused rather than reparsed on every request. A literal `mustach_template` is compiled once at config load. A `mustach_template` sourced from a variable can differ per request, so compiled templates are kept in a bounded, per-worker LRU cache instead — this directive sets that cache's capacity (number of distinct compiled templates it holds at once). Doesn't apply to literal templates, which aren't cached this way in the first place.
+- Templates are compiled once and reused rather than reparsed on every request. A literal `mustach_template` is compiled once at config load. A `mustach_template` sourced from a variable can differ per request, so compiled templates are kept in a bounded, per-worker LRU cache instead — this directive sets that cache's capacity (number of distinct compiled templates it holds at once). `0` disables the cache: a variable-sourced template is then compiled on every request and freed when the request ends. Doesn't apply to literal templates, which aren't cached this way in the first place.
 - Can only be given once for the whole `http` block (a second `mustach_template_cache` is a configuration error).
 
 ## Examples
