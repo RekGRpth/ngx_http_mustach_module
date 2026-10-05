@@ -361,10 +361,22 @@ static char *ngx_http_mustach_merge_loc_conf(ngx_conf_t *cf, void *parent, void 
     if (conf->json && !conf->template) { ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, "\"mustach_json\" requires \"mustach_template\" to be set in the same location"); return NGX_CONF_ERROR; }
     ngx_conf_merge_uint_value(conf->flags, prev->flags, Mustach_With_AllExtensions);
     if (conf->template && conf->template->lengths == NULL && conf->template->value.len) {
-        char *err;
-        if (mustach_build_jsmn((const char *)conf->template->value.data, conf->template->value.len, conf->flags, &conf->compiled, &err) != MUSTACH_OK) {
-            ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, "\"mustach_template\" error: %s", err);
-            return NGX_CONF_ERROR;
+        /* an inherited template with the same build-time flags: share the
+         * parent's compiled tree instead of compiling one per location */
+        if (conf->template == prev->template && prev->compiled && !((conf->flags ^ prev->flags) & (Mustach_With_Colon|Mustach_With_EmptyTag))) {
+            conf->compiled = prev->compiled;
+        } else {
+            /* freed with the cycle pool: on reload once the old cycle goes,
+             * or right away when the new configuration fails to load */
+            ngx_pool_cleanup_t *cln;
+            char *err;
+            if (!(cln = ngx_pool_cleanup_add(cf->pool, 0))) return NGX_CONF_ERROR;
+            if (mustach_build_jsmn((const char *)conf->template->value.data, conf->template->value.len, conf->flags, &conf->compiled, &err) != MUSTACH_OK) {
+                ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, "\"mustach_template\" error: %s", err);
+                return NGX_CONF_ERROR;
+            }
+            cln->handler = ngx_http_mustach_cleanup_template;
+            cln->data = conf->compiled;
         }
     }
     return NGX_CONF_OK;
