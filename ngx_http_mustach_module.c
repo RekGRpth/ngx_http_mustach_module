@@ -270,6 +270,10 @@ static ngx_int_t ngx_http_mustach_handler(ngx_http_request_t *r) {
     ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "%s", __func__);
     ngx_int_t rc = ngx_http_discard_request_body(r);
     if (rc != NGX_OK && rc != NGX_AGAIN) return rc;
+    ngx_http_mustach_context_t *context = ngx_pcalloc(r->pool, sizeof(*context));
+    if (!context) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!ngx_pcalloc"); return NGX_HTTP_INTERNAL_SERVER_ERROR; }
+    context->done = 1; /* rendered right here: keep the filters off this response */
+    ngx_http_set_ctx(r, context, ngx_http_mustach_module);
     ngx_http_mustach_location_t *location = ngx_http_get_module_loc_conf(r, ngx_http_mustach_module);
     ngx_str_t json;
     if (ngx_http_complex_value(r, location->json, &json) != NGX_OK) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_http_complex_value != NGX_OK"); return NGX_HTTP_INTERNAL_SERVER_ERROR; }
@@ -369,6 +373,7 @@ static char *ngx_http_mustach_merge_loc_conf(ngx_conf_t *cf, void *parent, void 
 static ngx_int_t ngx_http_mustach_header_filter(ngx_http_request_t *r) {
     ngx_http_mustach_location_t *location = ngx_http_get_module_loc_conf(r, ngx_http_mustach_module);
     if (!location->template) return ngx_http_next_header_filter(r);
+    if (ngx_http_get_module_ctx(r, ngx_http_mustach_module)) return ngx_http_next_header_filter(r);
     size_t len = sizeof("application/json") - 1;
     u_char *p = r->headers_out.content_type.data;
     if (!(r->headers_out.content_type.len >= len && !ngx_strncasecmp(p, (u_char *)"application/json", len) && (r->headers_out.content_type.len == len || p[len] == ';' || p[len] == ' '))) return ngx_http_next_header_filter(r);
