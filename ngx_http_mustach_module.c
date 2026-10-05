@@ -219,15 +219,20 @@ static ngx_int_t ngx_http_mustach_cache_get(ngx_http_request_t *r, ngx_str_t tex
     return NGX_OK;
 }
 
-static ngx_buf_t *ngx_http_mustach_process(ngx_http_request_t *r, ngx_str_t json) {
-    ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "%s", __func__);
+static ngx_int_t ngx_http_mustach_set_headers(ngx_http_request_t *r, ngx_http_mustach_location_t *location) {
     ngx_http_clear_accept_ranges(r);
     ngx_http_clear_content_length(r);
     ngx_http_weak_etag(r);
-    ngx_http_mustach_location_t *location = ngx_http_get_module_loc_conf(r, ngx_http_mustach_module);
-    if (location->content && ngx_http_complex_value(r, location->content, &r->headers_out.content_type) != NGX_OK) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_http_complex_value != NGX_OK"); return NULL; }
-    if (ngx_http_set_content_type(r) != NGX_OK) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_http_set_content_type != NGX_OK"); return NULL; }
+    if (location->content && ngx_http_complex_value(r, location->content, &r->headers_out.content_type) != NGX_OK) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_http_complex_value != NGX_OK"); return NGX_ERROR; }
+    if (ngx_http_set_content_type(r) != NGX_OK) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_http_set_content_type != NGX_OK"); return NGX_ERROR; }
     r->headers_out.content_type_len = r->headers_out.content_type.len;
+    return NGX_OK;
+}
+
+static ngx_buf_t *ngx_http_mustach_process(ngx_http_request_t *r, ngx_str_t json) {
+    ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "%s", __func__);
+    ngx_http_mustach_location_t *location = ngx_http_get_module_loc_conf(r, ngx_http_mustach_module);
+    if (ngx_http_mustach_set_headers(r, location) != NGX_OK) return NULL;
     mustach_template_t *templ;
     if (location->compiled) {
         templ = location->compiled;
@@ -394,6 +399,14 @@ ret:
     return rc;
 }
 
+/* The header filter held the header back, so it's not too late for a proper
+ * error response. `done` keeps the error page itself from being buffered and
+ * rendered as JSON. */
+static ngx_int_t ngx_http_mustach_filter_error(ngx_http_request_t *r, ngx_http_mustach_context_t *context) {
+    context->done = 1;
+    return ngx_http_filter_finalize_request(r, &ngx_http_mustach_module, NGX_HTTP_INTERNAL_SERVER_ERROR);
+}
+
 static ngx_int_t ngx_http_mustach_body_filter(ngx_http_request_t *r, ngx_chain_t *in) {
     if (!in) return ngx_http_next_body_filter(r, in);
     ngx_http_mustach_context_t *context = ngx_http_get_module_ctx(r, ngx_http_mustach_module);
@@ -403,7 +416,7 @@ static ngx_int_t ngx_http_mustach_body_filter(ngx_http_request_t *r, ngx_chain_t
     ngx_chain_t *last;
     for (last = in; last->next; last = last->next);
     if (!last->buf->last_buf && !last->buf->last_in_chain) {
-        if (ngx_chain_add_copy_buf(r->pool, &context->cl, in) != NGX_OK) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_chain_add_copy_buf != NGX_OK"); return NGX_HTTP_INTERNAL_SERVER_ERROR; }
+        if (ngx_chain_add_copy_buf(r->pool, &context->cl, in) != NGX_OK) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_chain_add_copy_buf != NGX_OK"); return ngx_http_mustach_filter_error(r, context); }
         return NGX_OK;
     }
     if (context->cl) {
@@ -416,8 +429,18 @@ static ngx_int_t ngx_http_mustach_body_filter(ngx_http_request_t *r, ngx_chain_t
         if (!ngx_buf_in_memory(cl->buf)) continue;
         json.len += cl->buf->last - cl->buf->pos;
     }
-    if (!json.len) return ngx_http_next_body_filter(r, in);
-    if (!(json.data = ngx_pnalloc(r->pool, json.len))) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!ngx_pnalloc"); return NGX_HTTP_INTERNAL_SERVER_ERROR; }
+    ngx_int_t rc;
+    if (!json.len) {
+        /* nothing to render (HEAD through a proxy, an empty or 304 response):
+         * still send the header held back by the header filter; HEAD gets the
+         * headers a GET would, minus the length it can't know */
+        context->done = 1;
+        if (r->method == NGX_HTTP_HEAD && ngx_http_mustach_set_headers(r, location) != NGX_OK) return ngx_http_mustach_filter_error(r, context);
+        rc = ngx_http_next_header_filter(r);
+        if (rc == NGX_ERROR || rc > NGX_OK || r->header_only) return rc;
+        return ngx_http_next_body_filter(r, in);
+    }
+    if (!(json.data = ngx_pnalloc(r->pool, json.len))) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!ngx_pnalloc"); return ngx_http_mustach_filter_error(r, context); }
     u_char *p = json.data;
     size_t len;
     for (ngx_chain_t *cl = context->cl ? context->cl : in; cl; cl = cl->next) {
@@ -426,9 +449,9 @@ static ngx_int_t ngx_http_mustach_body_filter(ngx_http_request_t *r, ngx_chain_t
         p = ngx_copy(p, cl->buf->pos, len);
     }
     ngx_chain_t cl = {.buf = ngx_http_mustach_process(r, json), .next = NULL};
-    if (!cl.buf) return NGX_HTTP_INTERNAL_SERVER_ERROR;
+    if (!cl.buf) return ngx_http_mustach_filter_error(r, context);
     context->done = 1;
-    ngx_int_t rc = ngx_http_next_header_filter(r);
+    rc = ngx_http_next_header_filter(r);
     if (rc == NGX_ERROR || rc > NGX_OK || r->header_only) return rc;
     return ngx_http_next_body_filter(r, &cl);
 }
