@@ -368,6 +368,31 @@ static const struct mustach_wrap_itf mustach_jsmn_wrap_itf = {
     .get = get
 };
 
+/* jsmn, strict or not, accepts object members without exactly one value --
+ * {"a"}, {"a":}, {"a" "b"}, {"a":1 "b":2} -- while find_member() and objiter
+ * take a member's value to be the token right after its key, and so walk off
+ * the end of `tokens` on such input. Reject it up front: one linear pass in
+ * document order with an explicit stack, no recursion. */
+static int check_tree(ngx_pool_t *pool, jsmntok_t *tokens, int ntok) {
+    struct { int object, left; } *stack;
+    int top = 0, i;
+    if (!tokens[0].size) return MUSTACH_OK;
+    if (!(stack = ngx_palloc(pool, (size_t) ntok * sizeof(*stack)))) return MUSTACH_ERROR_SYSTEM;
+    stack[top].object = tokens[0].type == JSMN_OBJECT;
+    stack[top++].left = tokens[0].size;
+    for (i = 1; top; i++) {
+        if (i >= ntok) return MUSTACH_ERROR_USER(1);
+        if (stack[top - 1].object && tokens[i].size != 1) return MUSTACH_ERROR_USER(1);
+        stack[top - 1].left--;
+        if (tokens[i].size) {
+            stack[top].object = tokens[i].type == JSMN_OBJECT;
+            stack[top++].left = tokens[i].size;
+        }
+        while (top && !stack[top - 1].left) top--;
+    }
+    return MUSTACH_OK;
+}
+
 /* Parses (compiles) a mustache template into a reusable mustach_template_t.
  * The returned template holds slices into `template`/`length`, so that
  * buffer must outlive it -- no copy is made here. Only the two build-time
@@ -391,15 +416,17 @@ int mustach_apply_jsmn(mustach_template_t *templ, const char *json, size_t jsonl
     int ntok, rc;
     struct expl e;
 
-    if (!jsonlen) { json = "{}"; jsonlen = 2; }
-
     jsmn_init(&p);
     ntok = jsmn_parse(&p, json, jsonlen, NULL, 0);
     if (ntok < 0) { *err = "invalid json"; fclose(file); return MUSTACH_ERROR_USER(1); }
-    if (!(tokens = ngx_palloc(pool, (size_t) (ntok ? ntok : 1) * sizeof(*tokens)))) { fclose(file); return MUSTACH_ERROR_SYSTEM; }
+    /* empty or whitespace-only: render against {} rather than read a tokens[0]
+     * that jsmn never filled in */
+    if (!ntok) { json = "{}"; jsonlen = 2; ntok = 1; }
+    if (!(tokens = ngx_palloc(pool, (size_t) ntok * sizeof(*tokens)))) { fclose(file); return MUSTACH_ERROR_SYSTEM; }
 
     jsmn_init(&p);
     if (jsmn_parse(&p, json, jsonlen, tokens, (unsigned) ntok) < 0) { *err = "invalid json"; fclose(file); return MUSTACH_ERROR_USER(1); }
+    if ((rc = check_tree(pool, tokens, ntok)) != MUSTACH_OK) { if (rc != MUSTACH_ERROR_SYSTEM) *err = "invalid json"; fclose(file); return rc; }
 
     e.json = json;
     e.tokens = tokens;
