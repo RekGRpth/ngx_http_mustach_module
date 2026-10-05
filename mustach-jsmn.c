@@ -170,6 +170,18 @@ static int start(void *closure) {
     return MUSTACH_OK;
 }
 
+/* atof() needs a NUL-terminated string, and a primitive token isn't one: it
+ * runs on into whatever follows, past the end of the buffer when the whole
+ * JSON is a bare number. */
+static double tok_number(struct expl *e, jsmntok_t *t) {
+    char buf[64], *s = buf;
+    int len = tok_len(t);
+    if ((size_t) len >= sizeof(buf) && !(s = ngx_pnalloc(e->pool, (size_t) len + 1))) return 0;
+    ngx_memcpy(s, e->json + t->start, (size_t) len);
+    s[len] = '\0';
+    return atof(s);
+}
+
 static int compare(void *closure, const char *value) {
     struct expl *e = closure;
     jsmntok_t *t;
@@ -185,7 +197,7 @@ static int compare(void *closure, const char *value) {
             if (tok_len(t) == 4 && !memcmp(s, "true", 4)) return strcmp("true", value);
             if (tok_len(t) == 5 && !memcmp(s, "false", 5)) return strcmp("false", value);
             if (tok_len(t) == 4 && !memcmp(s, "null", 4)) return strcmp("null", value);
-            { double d = atof(s) - atof(value); return d < 0 ? -1 : d > 0 ? 1 : 0; }
+            { double d = tok_number(e, t) - atof(value); return d < 0 ? -1 : d > 0 ? 1 : 0; }
         case JSMN_STRING:
             s = decode_string(e->pool, e->json, t, &slen);
             vlen = strlen(value);
