@@ -1,4 +1,5 @@
 #define JSMN_STATIC
+#define JSMN_PARENT_LINKS
 #include "jsmn.h"
 
 #include <ngx_config.h>
@@ -27,6 +28,7 @@ struct frame {
 struct expl {
     const char *json;
     jsmntok_t *tokens;
+    int *after;       /* after[i]: index of the token right after tokens[i]'s subtree */
     ngx_pool_t *pool;
     int selection;    /* token index, or -1 for "no value" */
     int depth;
@@ -41,16 +43,10 @@ static int tok_eq(struct expl *e, int idx, const char *name, size_t namelen) {
 }
 
 /* Skip past the whole subtree rooted at tokens[i], returning the index of
- * the token right after it. Relies on jsmn's convention that an object's
- * or array's `size` is its number of direct children (for an object, a
- * member key's own `size` is 1, standing for its value), and that a
- * subtree's tokens always immediately follow its own token in document
- * order -- the standard jsmn traversal idiom. */
-static int skip(jsmntok_t *tokens, int i) {
-    int end = i + 1, j, n = tokens[i].size;
-    for (j = 0; j < n; j++)
-        end = skip(tokens, end);
-    return end;
+ * the token right after it. O(1): precomputed by index_tree(), so neither
+ * deep nesting (recursion) nor repeated lookups over big subtrees cost more. */
+static int skip(struct expl *e, int i) {
+    return e->after[i];
 }
 
 static int find_member(struct expl *e, int container, const char *name, size_t namelen) {
@@ -58,14 +54,14 @@ static int find_member(struct expl *e, int container, const char *name, size_t n
     for (j = 0; j < n; j++) {
         int key = idx, value = key + 1;
         if (tok_eq(e, key, name, namelen)) return value;
-        idx = skip(e->tokens, value);
+        idx = skip(e, value);
     }
     return -1;
 }
 
 static int nth_element(struct expl *e, int container, int n) {
     int idx = container + 1, j;
-    for (j = 0; j < n; j++) idx = skip(e->tokens, idx);
+    for (j = 0; j < n; j++) idx = skip(e, idx);
     return idx;
 }
 
@@ -283,14 +279,14 @@ static int next(void *closure) {
     if (e->depth <= 0) return MUSTACH_ERROR_CLOSING;
     f = &e->stack[e->depth];
     if (f->is_objiter) {
-        int nk = skip(e->tokens, f->value);
+        int nk = skip(e, f->value);
         if (++f->index >= f->count) return 0;
         f->key = nk;
         f->value = nk + 1;
         return 1;
     }
     if (f->container >= 0) {
-        int ne = skip(e->tokens, f->value);
+        int ne = skip(e, f->value);
         if (++f->index >= f->count) return 0;
         f->value = ne;
         return 1;
@@ -372,23 +368,26 @@ static const struct mustach_wrap_itf mustach_jsmn_wrap_itf = {
  * {"a"}, {"a":}, {"a" "b"}, {"a":1 "b":2} -- while find_member() and objiter
  * take a member's value to be the token right after its key, and so walk off
  * the end of `tokens` on such input. Reject it up front: one linear pass in
- * document order with an explicit stack, no recursion. */
-static int check_tree(ngx_pool_t *pool, jsmntok_t *tokens, int ntok) {
-    struct { int object, left; } *stack;
-    int top = 0, i;
-    if (!tokens[0].size) return MUSTACH_OK;
+ * document order with an explicit stack, no recursion. The same pass fills
+ * in `after` for skip(). */
+static int index_tree(ngx_pool_t *pool, jsmntok_t *tokens, int ntok, int **pafter) {
+    struct { int tok, left; } *stack;
+    int top = 0, i, *after;
+    if (!(after = ngx_palloc(pool, (size_t) ntok * sizeof(*after)))) return MUSTACH_ERROR_SYSTEM;
+    *pafter = after;
+    if (!tokens[0].size) { after[0] = 1; return MUSTACH_OK; }
     if (!(stack = ngx_palloc(pool, (size_t) ntok * sizeof(*stack)))) return MUSTACH_ERROR_SYSTEM;
-    stack[top].object = tokens[0].type == JSMN_OBJECT;
+    stack[top].tok = 0;
     stack[top++].left = tokens[0].size;
     for (i = 1; top; i++) {
         if (i >= ntok) return MUSTACH_ERROR_USER(1);
-        if (stack[top - 1].object && tokens[i].size != 1) return MUSTACH_ERROR_USER(1);
+        if (tokens[stack[top - 1].tok].type == JSMN_OBJECT && tokens[i].size != 1) return MUSTACH_ERROR_USER(1);
         stack[top - 1].left--;
         if (tokens[i].size) {
-            stack[top].object = tokens[i].type == JSMN_OBJECT;
+            stack[top].tok = i;
             stack[top++].left = tokens[i].size;
-        }
-        while (top && !stack[top - 1].left) top--;
+        } else after[i] = i + 1;
+        while (top && !stack[top - 1].left) after[stack[--top].tok] = i + 1;
     }
     return MUSTACH_OK;
 }
@@ -426,7 +425,7 @@ int mustach_apply_jsmn(mustach_template_t *templ, const char *json, size_t jsonl
 
     jsmn_init(&p);
     if (jsmn_parse(&p, json, jsonlen, tokens, (unsigned) ntok) < 0) { *err = "invalid json"; fclose(file); return MUSTACH_ERROR_USER(1); }
-    if ((rc = check_tree(pool, tokens, ntok)) != MUSTACH_OK) { if (rc != MUSTACH_ERROR_SYSTEM) *err = "invalid json"; fclose(file); return rc; }
+    if ((rc = index_tree(pool, tokens, ntok, &e.after)) != MUSTACH_OK) { if (rc != MUSTACH_ERROR_SYSTEM) *err = "invalid json"; fclose(file); return rc; }
 
     e.json = json;
     e.tokens = tokens;

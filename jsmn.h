@@ -312,10 +312,16 @@ JSMN_API int jsmn_parse(jsmn_parser *parser, const char *js, const size_t len,
       }
       type = (c == '}' ? JSMN_OBJECT : JSMN_ARRAY);
 #ifdef JSMN_PARENT_LINKS
-      if (parser->toknext < 1) {
+      /* Local change from upstream jsmn: start from toksuper, the innermost
+       * open container (or a key/value inside it), not from the last token.
+       * Upstream walks up through every already-closed ancestor of the last
+       * token on each closing bracket, which is quadratic in nesting depth.
+       * toksuper is always on that same ancestor chain, below the first open
+       * container, so the result is the same. */
+      if (parser->toknext < 1 || parser->toksuper == -1) {
         return JSMN_ERROR_INVAL;
       }
-      token = &tokens[parser->toknext - 1];
+      token = &tokens[parser->toksuper];
       for (;;) {
         if (token->start != -1 && token->end == -1) {
           if (token->type != type) {
