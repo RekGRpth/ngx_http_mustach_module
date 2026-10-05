@@ -375,6 +375,7 @@ static ngx_int_t ngx_http_mustach_header_filter(ngx_http_request_t *r) {
     ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "%s", __func__);
     ngx_http_mustach_context_t *context = ngx_pcalloc(r->pool, sizeof(*context));
     if (!context) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!ngx_pcalloc"); return NGX_ERROR; }
+    r->filter_need_in_memory = 1; /* have the copy filter read file buffers (sendfile, cache hits) into memory */
     ngx_http_set_ctx(r, context, ngx_http_mustach_module);
     return NGX_OK;
 }
