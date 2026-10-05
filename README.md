@@ -89,7 +89,7 @@ location /api/ {
 }
 ```
 
-Whatever `backend` returns is only rewritten if it comes back as `application/json` (optionally followed by `;` or a space, e.g. `application/json; charset=utf-8`) — any other `Content-Type` passes through untouched.
+Whatever `backend` returns is only rewritten if it comes back as `200` with `application/json` (optionally followed by `;` or a space, e.g. `application/json; charset=utf-8`) — any other `Content-Type`, and any other status (API errors, a `206` to a `Range` request, ...), passes through untouched.
 
 ## Building
 
