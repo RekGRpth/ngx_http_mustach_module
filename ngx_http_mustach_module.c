@@ -230,7 +230,13 @@ static ngx_int_t ngx_http_mustach_set_headers(ngx_http_request_t *r, ngx_http_mu
     ngx_http_clear_accept_ranges(r);
     ngx_http_clear_content_length(r);
     ngx_http_weak_etag(r);
-    if (location->content && ngx_http_complex_value(r, location->content, &r->headers_out.content_type) != NGX_OK) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_http_complex_value != NGX_OK"); return NGX_ERROR; }
+    if (location->content) {
+        ngx_str_t *ct = &r->headers_out.content_type;
+        if (ngx_http_complex_value(r, location->content, ct) != NGX_OK) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_http_complex_value != NGX_OK"); return NGX_ERROR; }
+        /* a type with its own charset replaces the upstream's, which the
+         * header filter would otherwise append as a second one */
+        if (ct->len && ngx_strlcasestrn(ct->data, ct->data + ct->len, (u_char *) "charset=", sizeof("charset=") - 2)) { ngx_str_null(&r->headers_out.charset); }
+    }
     if (ngx_http_set_content_type(r) != NGX_OK) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_http_set_content_type != NGX_OK"); return NGX_ERROR; }
     r->headers_out.content_type_len = r->headers_out.content_type.len;
     /* the lowercased copy that ngx_http_test_content_type() caches (for
