@@ -253,7 +253,12 @@ static ngx_buf_t *ngx_http_mustach_process(ngx_http_request_t *r, ngx_str_t json
     /* an empty render gets a special last_buf: a zero-size temporary buffer
      * makes the write filter fail the whole response */
     if (!(b = output.len ? ngx_create_temp_buf(r->pool, output.len) : ngx_calloc_buf(r->pool))) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!ngx_create_temp_buf"); goto free; }
-    b->last_buf = 1;
+    /* last_buf ends the whole response: a subrequest (SSI include, ...) only
+     * ends its own part of it, and an empty one then needs sync to still be a
+     * special buffer, as in ngx_http_send_special() */
+    b->last_buf = r == r->main;
+    b->last_in_chain = 1;
+    if (!output.len && !b->last_buf) b->sync = 1;
     if (output.len) b->last = ngx_copy(b->last, output.data, output.len);
     if (r == r->main) {
         r->headers_out.content_length_n = b->last - b->pos;
