@@ -31,6 +31,7 @@ __DATA__
     location /test {
         mustach_template "[{{a}}]";
         mustach_content text/plain;
+        proxy_http_version 1.1;
         proxy_pass http://127.0.0.1:$server_port/data/a.json;
     }
 --- user_files
@@ -62,6 +63,7 @@ not rendering a "gzip"-encoded response
         mustach_template "[{{a}}]";
         mustach_content text/plain;
         proxy_set_header Accept-Encoding "";
+        proxy_http_version 1.1;
         proxy_pass http://127.0.0.1:$server_port/data/a.json;
     }
 --- user_files
