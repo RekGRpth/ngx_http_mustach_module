@@ -48,6 +48,14 @@ It can work two ways:
 - In body-filter mode, the largest upstream JSON the module will hold in memory to render (like `image_filter_buffer`). A larger response gets a 500 — right away when its `Content-Length` says so, or as soon as it's grown past the limit otherwise. `0` lifts the limit.
 - Inherited by nested locations unless overridden.
 
+### mustach_max_output_size
+
+- **syntax:** `mustach_max_output_size size;`
+- **default:** `10m`
+- **context:** `http`, `server`, `location`, `if in location`
+- The largest page a render may produce, in both modes. Rendering stops as soon as the output grows past it, and the request gets a 500. A template's output can be far larger than its data — partials taken from the data are templates too — so this bounds the worker memory a single render can take. `0` lifts the limit.
+- Inherited by nested locations unless overridden.
+
 ### mustach_partials_root
 
 - **syntax:** `mustach_partials_root path;`

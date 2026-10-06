@@ -14,7 +14,7 @@
 #include <string.h>
 
 int mustach_build_jsmn(const char *template, size_t length, int flags, mustach_template_t **templ, char **err);
-int mustach_apply_jsmn(mustach_template_t *templ, const char *json, size_t jsonlen, int flags, FILE *file, char **err, ngx_pool_t *pool, const ngx_str_t *partials);
+int mustach_apply_jsmn(mustach_template_t *templ, const char *json, size_t jsonlen, int flags, FILE *file, char **err, ngx_pool_t *pool, const ngx_str_t *partials, size_t max_output);
 
 struct frame {
     int container;   /* token index of the array being iterated, or -1 */
@@ -555,6 +555,27 @@ static int index_tree(ngx_pool_t *pool, jsmntok_t *tokens, int ntok, int **pafte
     return MUSTACH_OK;
 }
 
+/* The rendered output goes through here: rendering stops with an error once
+ * it outgrows mustach_max_output_size, rather than filling the worker's
+ * memory -- partials taken from the data are templates too, so a small JSON
+ * can otherwise expand into an arbitrarily large page. */
+struct output {
+    FILE *file;
+    size_t left;      /* bytes still allowed, when `limited` */
+    int limited;
+};
+
+#define MUSTACH_ERROR_OUTPUT_TOO_BIG MUSTACH_ERROR_USER(2)
+
+static int write_output(void *closure, const char *buffer, size_t size) {
+    struct output *o = closure;
+    if (o->limited) {
+        if (size > o->left) return MUSTACH_ERROR_OUTPUT_TOO_BIG;
+        o->left -= size;
+    }
+    return mustach_fwrite_cb(o->file, buffer, size);
+}
+
 /* Parses (compiles) a mustache template into a reusable mustach_template_t.
  * The returned template holds slices into `template`/`length`, so that
  * buffer must outlive it -- no copy is made here. Only the two build-time
@@ -572,7 +593,7 @@ int mustach_build_jsmn(const char *template, size_t length, int flags, mustach_t
 
 /* Renders an already-compiled template against JSON data. Can be called
  * repeatedly against the same `templ` for different JSON payloads. */
-int mustach_apply_jsmn(mustach_template_t *templ, const char *json, size_t jsonlen, int flags, FILE *file, char **err, ngx_pool_t *pool, const ngx_str_t *partials) {
+int mustach_apply_jsmn(mustach_template_t *templ, const char *json, size_t jsonlen, int flags, FILE *file, char **err, ngx_pool_t *pool, const ngx_str_t *partials, size_t max_output) {
     jsmn_parser p;
     jsmntok_t *tokens;
     int ntok, rc, big;
@@ -600,8 +621,10 @@ int mustach_apply_jsmn(mustach_template_t *templ, const char *json, size_t jsonl
     e.partials = partials;
     mustach_wrap_get_partial = get_partial;
     partial_expl = &e;
-    rc = mustach_wrap_apply(templ, &mustach_jsmn_wrap_itf, &e, flags, mustach_fwrite_cb, NULL, file);
+    struct output o = { .file = file, .left = max_output, .limited = max_output != 0 };
+    rc = mustach_wrap_apply(templ, &mustach_jsmn_wrap_itf, &e, flags, write_output, NULL, &o);
     partial_expl = NULL;
+    if (rc == MUSTACH_ERROR_OUTPUT_TOO_BIG) *err = "rendered output is larger than mustach_max_output_size";
     fclose(file);
     return rc;
 }
