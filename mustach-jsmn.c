@@ -105,6 +105,10 @@ static const char *decode_string(ngx_pool_t *pool, const char *json, jsmntok_t *
     const char *s = json + t->start;
     int len = tok_len(t), i;
     char *out, *o;
+    /* mustach takes a zero length to mean "NUL-terminated, measure it": a
+     * slice of the JSON for "" would print the rest of the document, and
+     * run past the end of the buffer looking for that NUL */
+    if (!len) { *outlen = 0; return ""; }
     for (i = 0; i < len; i++)
         if (s[i] == '\\')
             break;
