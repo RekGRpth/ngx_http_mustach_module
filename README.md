@@ -4,8 +4,10 @@ An nginx module that renders [Mustache](https://mustache.github.io/) templates a
 
 It can work two ways:
 
-- **As a content handler** — a location renders a template against JSON coming from an nginx variable (`mustach_json`) and returns the result directly. No upstream/backend needed.
-- **As a body filter** — a location's response is produced by something else (`proxy_pass`, `return`, a static file, ...); if that response comes back with `Content-Type: application/json`, this module buffers it, treats it as the data, and rewrites the body by rendering `mustach_template` against it.
+- **As a content handler** — a location renders a template against JSON given by `mustach_json` (a literal, a variable, the request body, ...) and returns the result directly. No upstream/backend needed.
+- **As a body filter** — a location's response is produced by something else (`proxy_pass`, a static file, `return`, a cache hit, ...); if that response is a `200` with `Content-Type: application/json`, this module buffers it, treats it as the data, and rewrites the body by rendering `mustach_template` against it. See [How body-filter mode decides](#how-body-filter-mode-decides).
+
+Both modes also work inside subrequests, e.g. an SSI `<!--# include virtual="..." -->` of a location that renders.
 
 ## Directives
 
@@ -14,28 +16,30 @@ It can work two ways:
 - **syntax:** `mustach_template <text>;`
 - **context:** `http`, `server`, `location`, `if in location`
 - Sets the Mustache template. Required for both modes — it's what actually turns the module on (installing the body filter for the whole `http` block once any location uses it). The value is an [nginx complex value](https://nginx.org/en/docs/dev/development_guide.html#http_variables) and can reference variables, e.g. `mustach_template $tmpl;`.
+- A literal template is compiled once, at configuration load: a syntax error in it stops nginx from starting (or a reload from being applied). A template taken from a variable is compiled when used, and kept in a per-worker cache (see `mustach_template_cache`).
 - Inherited by nested locations unless overridden.
 
 ### mustach_json
 
 - **syntax:** `mustach_json <text>;`
 - **context:** `location`, `if in location`
-- Sets the JSON data and switches the location into **content-handler mode**: this directive installs itself as the location's content handler, so the location no longer needs (or should have) another one like `proxy_pass` or `return`. Requires `mustach_template`, set in the same location or inherited — the module refuses to start otherwise, rather than crashing on the first request.
-- Combining `mustach_json` with another directive that already claims the location's content handler (`proxy_pass`, `return`, ...) is a configuration error, whichever of the two is declared second.
+- Sets the JSON data and switches the location into **content-handler mode**: this directive installs itself as the location's content handler. Requires `mustach_template`, set in the same location or inherited — the module refuses to start otherwise, rather than crashing on the first request.
+- Don't combine it with another content handler such as `proxy_pass`. nginx reports the conflict only when `mustach_json` comes second; when the other directive comes second, it silently takes over and `mustach_json` is ignored. `return` runs before any content handler, so in a location with both, `return` answers (and its response is then rendered in body-filter mode if it's JSON).
 - Like `proxy_pass`, not inherited by nested locations: each location that should render needs its own `mustach_json`. (Blocks such as `if` and `limit_except` inside the location do keep it.)
 - The request body is read before rendering (subject to `client_max_body_size`), so the data can come from it: `mustach_json $request_body;`. `$request_body` is empty once the body is written to a temporary file, so make `client_body_buffer_size` as large as the bodies you expect; the module logs a warning when the data comes out empty because of this.
+- The response is always a `200`.
 
 ### mustach_content
 
 - **syntax:** `mustach_content <text>;`
 - **context:** `http`, `server`, `location`, `if in location`
-- Overrides the `Content-Type` of the rendered response (e.g. `mustach_content text/html;`). Without it, the usual nginx `Content-Type` resolution applies (MIME type by extension, then `default_type`).
+- Overrides the `Content-Type` of the rendered response (e.g. `mustach_content text/html;`). Without it, the usual nginx `Content-Type` resolution applies (MIME type by extension, then `default_type`) — in body-filter mode, that leaves the upstream's `application/json`.
 - Inherited by nested locations unless overridden.
 
 ### mustach_flags
 
 - **syntax:** `mustach_flags flag ...;`
-- **default:** all extensions enabled
+- **default:** all extensions enabled, except `errorundefined`
 - **context:** `http`, `server`, `location`, `if in location`
 - Selects which [mustach extensions](https://gitlab.com/jobol/mustach) are active, as a space-separated list of: `allextensions`, `colon`, `compare`, `emptytag`, `equal`, `errorundefined`, `escfirstcmp`, `incpartial`, `jsonpointer`, `noextensions`, `objectiter`, `partialdatafirst`, `singledot`.
 - Can only be given once per location (a second `mustach_flags` in the same location is a configuration error); inherited by nested locations that don't set their own.
@@ -45,7 +49,7 @@ It can work two ways:
 - **syntax:** `mustach_max_json_size size;`
 - **default:** `1m`
 - **context:** `http`, `server`, `location`, `if in location`
-- In body-filter mode, the largest upstream JSON the module will hold in memory to render (like `image_filter_buffer`). A larger response gets a 500 — right away when its `Content-Length` says so, or as soon as it's grown past the limit otherwise. `0` lifts the limit.
+- In body-filter mode, the largest upstream JSON the module will hold in memory to render (like `image_filter_buffer`). A larger response gets a 500 — right away when its `Content-Length` says so, or as soon as it's grown past the limit otherwise. `0` lifts the limit. (In content-handler mode, a request body is bounded by `client_max_body_size`.)
 - Inherited by nested locations unless overridden.
 
 ### mustach_max_output_size
@@ -75,6 +79,24 @@ It can work two ways:
 - Templates are compiled once and reused rather than reparsed on every request. A literal `mustach_template` is compiled once at config load. A `mustach_template` sourced from a variable can differ per request, so compiled templates are kept in a bounded, per-worker LRU cache instead — this directive sets that cache's capacity (number of distinct compiled templates it holds at once). `0` disables the cache: a variable-sourced template is then compiled on every request and freed when the request ends. Doesn't apply to literal templates, which aren't cached this way in the first place.
 - Can only be given once for the whole `http` block (a second `mustach_template_cache` is a configuration error).
 
+## How body-filter mode decides
+
+In a location with `mustach_template` (and no `mustach_json`), a response is rendered only if all of these hold; otherwise it passes through untouched, headers and body:
+
+- its status is `200` — API errors, redirects, a `206` to a `Range` request, ... are left alone;
+- its `Content-Type` is `application/json`, optionally followed by `;` or a space (e.g. `application/json; charset=utf-8`);
+- it isn't compressed: a response with a `Content-Encoding` (other than `identity`) can't be parsed here, so it passes through and the module logs a warning — see the example below.
+
+A rendered response gets a fresh `Content-Length`, a weakened `ETag`, no `Accept-Ranges`, and the `Content-Type` from `mustach_content` if set. A `HEAD` request gets the same headers as the corresponding `GET` would, without a `Content-Length` when the body never arrived (e.g. through a proxy). A `200` JSON response with an empty body passes through as is.
+
+Static files, `sendfile`, and responses served from `proxy_cache` are rendered like any other response.
+
+## Errors and limits
+
+- Invalid JSON, a template error, a partial from the data over 64k, an output over `mustach_max_output_size` or an upstream JSON over `mustach_max_json_size` all give a `500` and a line in the error log saying what went wrong.
+- In body-filter mode the module holds the upstream response's header back until the body has been rendered, so it can still answer with a proper `500` page.
+- A template that renders to nothing gives an empty `200` (`Content-Length: 0`).
+
 ## Examples
 
 ### Content-handler mode
@@ -87,13 +109,14 @@ location /hello {
 }
 ```
 
-Typically the JSON comes from a variable instead of a literal, e.g. built with `set`/`ngx_http_evaluate_module`/the request body:
+Typically the JSON comes from a variable instead of a literal — the request body, a variable built with `set` or another module, ...:
 
 ```nginx
-location /hello {
+location /render {
+    client_body_buffer_size 64k;   # keep bodies in memory, where $request_body can see them
     mustach_template "Hello, {{name}}!";
     mustach_content  text/plain;
-    mustach_json     $arg_name_as_json;
+    mustach_json     $request_body;
 }
 ```
 
@@ -107,9 +130,7 @@ location /api/ {
 }
 ```
 
-Whatever `backend` returns is only rewritten if it comes back as `200` with `application/json` (optionally followed by `;` or a space, e.g. `application/json; charset=utf-8`) — any other `Content-Type`, and any other status (API errors, a `206` to a `Range` request, ...), passes through untouched.
-
-So does a compressed response (`Content-Encoding: gzip`, ...): the module can't parse it, and logs a warning instead. `proxy_pass` forwards the client's `Accept-Encoding`, so a backend that compresses JSON will do so for any browser — have it send the data uncompressed:
+`proxy_pass` forwards the client's `Accept-Encoding`, so a backend that compresses JSON will do so for any browser, and those responses would pass through unrendered — have it send the data uncompressed:
 
 ```nginx
 location /api/ {
@@ -122,16 +143,29 @@ location /api/ {
 
 The rendered page itself can still be compressed on the way out with `gzip on;`.
 
+### Partials
+
+```nginx
+location /list {
+    mustach_template      '<ul>{{#items}}{{> item}}{{/items}}</ul>';
+    mustach_content       text/html;
+    mustach_partials_root /etc/nginx/mustache;   # item, or item.mustache, from here
+    proxy_pass            http://backend;
+}
+```
+
 ## Building
 
 Add it with `--add-module=path/to/ngx_http_mustach_module` (static) or `--add-dynamic-module=path/to/ngx_http_mustach_module` (dynamic) to nginx's `configure`.
 
-The build always requires [libmustach](https://gitlab.com/jobol/mustach) itself, plus the vendored header-only JSON tokenizer ([jsmn.h](jsmn.h)) — no other JSON library needed.
+The build requires [libmustach](https://gitlab.com/jobol/mustach) 2.x (it uses the compiled-template API: `mustach_make_template`, `mustach_wrap_apply`), linked as `-lmustach`. JSON is parsed by the vendored header-only tokenizer [jsmn.h](jsmn.h) — no other JSON library needed. That copy carries a local change, marked in the file, that keeps parsing linear on deeply nested input.
 
 ## Testing
 
-The test suite uses [Test::Nginx](https://metacpan.org/pod/Test::Nginx::Socket):
+The test suite uses [Test::Nginx](https://metacpan.org/pod/Test::Nginx::Socket). Run it from the repository root (some tests read fixture partials from there):
 
 ```sh
 prove -r t/
 ```
+
+The tests load the module from `/etc/nginx/modules/ngx_http_mustach_module.so`, so install the build you want to test there first. A few tests also load `ngx_http_echo_module.so` and `ngx_http_evaluate_module.so` from the same directory.
