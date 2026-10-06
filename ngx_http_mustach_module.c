@@ -536,6 +536,8 @@ static ngx_int_t ngx_http_mustach_append(ngx_http_request_t *r, ngx_http_mustach
             u_char *data = ngx_pnalloc(r->pool, cap);
             if (!data) return NGX_ERROR;
             if (context->len) ngx_memcpy(data, context->data, context->len);
+            /* at 4096 bytes and up, a pool "large" allocation: give it back */
+            if (context->data) ngx_pfree(r->pool, context->data);
             context->data = data;
             context->cap = cap;
         }
