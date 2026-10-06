@@ -9,7 +9,7 @@
 #include <mustach/mustach-wrap.h>
 
 int mustach_build_jsmn(const char *template, size_t length, int flags, mustach_template_t **templ, char **err);
-int mustach_apply_jsmn(mustach_template_t *templ, const char *json, size_t jsonlen, int flags, FILE *file, char **err, ngx_pool_t *pool, const ngx_str_t *partials, size_t max_output);
+int mustach_apply_jsmn(mustach_template_t *templ, const char *json, size_t jsonlen, int flags, FILE *file, char **err, ngx_pool_t *pool, const ngx_str_t *partials, size_t max_output, size_t partials_limit);
 
 typedef struct {
     u_char *data;   /* upstream JSON buffered so far */
@@ -31,6 +31,7 @@ typedef struct {
     ngx_str_t partials;
     size_t max_json_size;
     size_t max_output_size;
+    size_t data_partials_limit;
     mustach_template_t *compiled; /* set when `template` is a constant, built once at config time */
 } ngx_http_mustach_location_t;
 
@@ -256,7 +257,7 @@ static ngx_buf_t *ngx_http_mustach_process(ngx_http_request_t *r, ngx_str_t json
     if (!out) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!open_memstream"); return NULL; }
     ngx_buf_t *b = NULL;
     char *err;
-    int rc = mustach_apply_jsmn(templ, (const char *)json.data, json.len, location->flags, out, &err, r->pool, location->partials.len ? &location->partials : NULL, location->max_output_size);
+    int rc = mustach_apply_jsmn(templ, (const char *)json.data, json.len, location->flags, out, &err, r->pool, location->partials.len ? &location->partials : NULL, location->max_output_size, location->data_partials_limit);
     if (rc != MUSTACH_OK) { ngx_http_mustach_log_error(r, rc, err); goto free; }
     /* an empty render gets a special last_buf: a zero-size temporary buffer
      * makes the write filter fail the whole response */
@@ -346,6 +347,12 @@ static ngx_command_t ngx_http_mustach_commands[] = {
     .conf = NGX_HTTP_LOC_CONF_OFFSET,
     .offset = offsetof(ngx_http_mustach_location_t, content),
     .post = NULL },
+  { .name = ngx_string("mustach_data_partials_limit"),
+    .type = NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_HTTP_LIF_CONF|NGX_CONF_TAKE1,
+    .set = ngx_conf_set_size_slot,
+    .conf = NGX_HTTP_LOC_CONF_OFFSET,
+    .offset = offsetof(ngx_http_mustach_location_t, data_partials_limit),
+    .post = NULL },
   { .name = ngx_string("mustach_flags"),
     .type = NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_HTTP_LIF_CONF|NGX_CONF_1MORE,
     .set = ngx_http_mustach_flags_conf,
@@ -410,6 +417,7 @@ static void *ngx_http_mustach_create_loc_conf(ngx_conf_t *cf) {
     location->flags = NGX_CONF_UNSET_UINT;
     location->max_json_size = NGX_CONF_UNSET_SIZE;
     location->max_output_size = NGX_CONF_UNSET_SIZE;
+    location->data_partials_limit = NGX_CONF_UNSET_SIZE;
     return location;
 }
 
@@ -432,6 +440,7 @@ static char *ngx_http_mustach_merge_loc_conf(ngx_conf_t *cf, void *parent, void 
     ngx_conf_merge_str_value(conf->partials, prev->partials, "");
     ngx_conf_merge_size_value(conf->max_json_size, prev->max_json_size, 1024 * 1024);
     ngx_conf_merge_size_value(conf->max_output_size, prev->max_output_size, 10 * 1024 * 1024);
+    ngx_conf_merge_size_value(conf->data_partials_limit, prev->data_partials_limit, 1024 * 1024);
     if (conf->json && !conf->template) { ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, "\"mustach_json\" requires \"mustach_template\", set here or inherited"); return NGX_CONF_ERROR; }
     ngx_conf_merge_uint_value(conf->flags, prev->flags, Mustach_With_AllExtensions);
     if (conf->template && conf->template->lengths == NULL && conf->template->value.len) {

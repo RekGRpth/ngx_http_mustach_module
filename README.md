@@ -36,6 +36,14 @@ Both modes also work inside subrequests, e.g. an SSI `<!--# include virtual="...
 - Overrides the `Content-Type` of the rendered response (e.g. `mustach_content text/html;`). Without it, the usual nginx `Content-Type` resolution applies (MIME type by extension, then `default_type`) — in body-filter mode, that leaves the upstream's `application/json`.
 - Inherited by nested locations unless overridden.
 
+### mustach_data_partials_limit
+
+- **syntax:** `mustach_data_partials_limit size;`
+- **default:** `1m`
+- **context:** `http`, `server`, `location`, `if in location`
+- A per-render budget for partials taken from the JSON data. Each such partial lookup is charged its length, and at least 64 bytes; once the budget runs out, rendering stops and the request gets a 500. A partial from the data is a template the JSON supplies, and it costs work and memory even when it outputs nothing, so this bounds what the data can make a render do. `0` lifts the limit. Partials from files and the template itself aren't charged.
+- Inherited by nested locations unless overridden.
+
 ### mustach_flags
 
 - **syntax:** `mustach_flags flag ...;`
@@ -57,7 +65,7 @@ Both modes also work inside subrequests, e.g. an SSI `<!--# include virtual="...
 - **syntax:** `mustach_max_output_size size;`
 - **default:** `10m`
 - **context:** `http`, `server`, `location`, `if in location`
-- The largest page a render may produce, in both modes. Rendering stops as soon as the output grows past it, and the request gets a 500. A template's output can be far larger than its data — partials taken from the data are templates too — so this bounds the worker memory a single render can take. `0` lifts the limit.
+- The largest page a render may produce, in both modes. Rendering stops as soon as the output grows past it, and the request gets a 500. A template's output can be far larger than its data — partials taken from the data are templates too — so this bounds the size of the page a single render can build; the work partials from the data take is bounded by `mustach_data_partials_limit`. `0` lifts the limit.
 - Inherited by nested locations unless overridden.
 
 ### mustach_partials_root
@@ -93,7 +101,7 @@ Static files, `sendfile`, and responses served from `proxy_cache` are rendered l
 
 ## Errors and limits
 
-- Invalid JSON, a template error, a partial from the data over 64k, an output over `mustach_max_output_size` or an upstream JSON over `mustach_max_json_size` all give a `500` and a line in the error log saying what went wrong.
+- Invalid JSON, a template error, a partial from the data over 64k, partials from the data over `mustach_data_partials_limit`, an output over `mustach_max_output_size` or an upstream JSON over `mustach_max_json_size` all give a `500` and a line in the error log saying what went wrong.
 - In body-filter mode the module holds the upstream response's header back until the body has been rendered, so it can still answer with a proper `500` page.
 - A template that renders to nothing gives an empty `200` (`Content-Length: 0`).
 

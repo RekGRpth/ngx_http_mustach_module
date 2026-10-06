@@ -14,7 +14,7 @@
 #include <string.h>
 
 int mustach_build_jsmn(const char *template, size_t length, int flags, mustach_template_t **templ, char **err);
-int mustach_apply_jsmn(mustach_template_t *templ, const char *json, size_t jsonlen, int flags, FILE *file, char **err, ngx_pool_t *pool, const ngx_str_t *partials, size_t max_output);
+int mustach_apply_jsmn(mustach_template_t *templ, const char *json, size_t jsonlen, int flags, FILE *file, char **err, ngx_pool_t *pool, const ngx_str_t *partials, size_t max_output, size_t partials_limit);
 
 struct frame {
     int container;   /* token index of the array being iterated, or -1 */
@@ -38,6 +38,8 @@ struct expl {
     int flags;
     const ngx_str_t *partials; /* mustach_partials_root, or NULL */
     const char *too_big;       /* name of a data partial over DATA_PARTIAL_MAX */
+    size_t partials_left;      /* mustach_data_partials_limit budget left, */
+    int partials_limited;      /* when there is one */
     struct frame stack[MUSTACH_MAX_DEPTH];
 };
 
@@ -445,6 +447,19 @@ static struct expl *partial_expl;
 #define DATA_PARTIAL_MAX (64 * 1024)
 #define MUSTACH_ERROR_PARTIAL_TOO_BIG MUSTACH_ERROR_USER(3)
 
+/* Every partial taken from the data costs work and request-pool memory
+ * whether or not it outputs anything, so each lookup is charged against a
+ * per-render budget: its length, and at least DATA_PARTIAL_COST. */
+#define DATA_PARTIAL_COST 64
+#define MUSTACH_ERROR_PARTIALS_LIMIT MUSTACH_ERROR_USER(4)
+
+static int charge_partial(struct expl *e, size_t cost) {
+    if (!e->partials_limited) return MUSTACH_OK;
+    if (cost > e->partials_left) return MUSTACH_ERROR_PARTIALS_LIMIT;
+    e->partials_left -= cost;
+    return MUSTACH_OK;
+}
+
 /* Looks `name` up in the JSON data the way mustach-wrap itself does, by
  * rendering {{&name}} against the current context, so names resolve as they
  * always did: dots, JSON pointers, objiter keys. Returns 1 with the value in
@@ -458,6 +473,7 @@ static int partial_from_data(struct expl *e, const char *name, struct mustach_sb
     size_t outlen = 0;
     FILE *file;
     int rc;
+    if ((rc = charge_partial(e, DATA_PARTIAL_COST)) != MUSTACH_OK) return rc;
     /* delimiters that can't clash with the name */
     if (strchr(name, '\x01') || strchr(name, '\x02')) return 0;
     if (!(tpl = ngx_pnalloc(e->pool, strlen(name) + sizeof("{{=\x01 \x02=}}\x01&\x02") - 1))) return MUSTACH_ERROR_SYSTEM;
@@ -477,6 +493,7 @@ static int partial_from_data(struct expl *e, const char *name, struct mustach_sb
         if ((copy = ngx_pnalloc(e->pool, strlen(name) + 1))) e->too_big = strcpy(copy, name);
         return MUSTACH_ERROR_PARTIAL_TOO_BIG;
     }
+    if (outlen > DATA_PARTIAL_COST && (rc = charge_partial(e, outlen - DATA_PARTIAL_COST)) != MUSTACH_OK) { free(out); return rc; }
     if (!(copy = ngx_pnalloc(e->pool, outlen))) { free(out); return MUSTACH_ERROR_SYSTEM; }
     ngx_memcpy(copy, out, outlen);
     free(out);
@@ -613,7 +630,7 @@ int mustach_build_jsmn(const char *template, size_t length, int flags, mustach_t
 
 /* Renders an already-compiled template against JSON data. Can be called
  * repeatedly against the same `templ` for different JSON payloads. */
-int mustach_apply_jsmn(mustach_template_t *templ, const char *json, size_t jsonlen, int flags, FILE *file, char **err, ngx_pool_t *pool, const ngx_str_t *partials, size_t max_output) {
+int mustach_apply_jsmn(mustach_template_t *templ, const char *json, size_t jsonlen, int flags, FILE *file, char **err, ngx_pool_t *pool, const ngx_str_t *partials, size_t max_output, size_t partials_limit) {
     jsmn_parser p;
     jsmntok_t *tokens;
     int ntok, rc, big;
@@ -640,12 +657,15 @@ int mustach_apply_jsmn(mustach_template_t *templ, const char *json, size_t jsonl
     e.flags = flags;
     e.partials = partials;
     e.too_big = NULL;
+    e.partials_left = partials_limit;
+    e.partials_limited = partials_limit != 0;
     mustach_wrap_get_partial = get_partial;
     partial_expl = &e;
     struct output o = { .file = file, .left = max_output, .limited = max_output != 0 };
     rc = mustach_wrap_apply(templ, &mustach_jsmn_wrap_itf, &e, flags, write_output, NULL, &o);
     partial_expl = NULL;
     if (rc == MUSTACH_ERROR_OUTPUT_TOO_BIG) *err = "rendered output is larger than mustach_max_output_size";
+    if (rc == MUSTACH_ERROR_PARTIALS_LIMIT) *err = "partials from the data exceed mustach_data_partials_limit";
     if (rc == MUSTACH_ERROR_PARTIAL_TOO_BIG) {
         char *msg = e.too_big ? ngx_pnalloc(pool, strlen(e.too_big) + sizeof("partial \"\" from the data is larger than 64k")) : NULL;
         if (msg) *ngx_sprintf((u_char *) msg, "partial \"%s\" from the data is larger than 64k", e.too_big) = '\0';
