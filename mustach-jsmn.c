@@ -37,6 +37,7 @@ struct expl {
     int nested;       /* a get_partial() lookup: keep the caller's context */
     int flags;
     const ngx_str_t *partials; /* mustach_partials_root, or NULL */
+    const char *too_big;       /* name of a data partial over DATA_PARTIAL_MAX */
     struct frame stack[MUSTACH_MAX_DEPTH];
 };
 
@@ -430,6 +431,13 @@ static const struct mustach_wrap_itf mustach_jsmn_wrap_itf = {
  * global hook and gets no closure. Workers render one request at a time. */
 static struct expl *partial_expl;
 
+/* A partial from the data is a template the JSON supplies, and libmustach
+ * copies each tag name it looks up into a stack buffer of that name's size:
+ * a multi-megabyte name overflows the worker's stack. Its tag names can't be
+ * longer than the partial itself, so capping the partial bounds them. */
+#define DATA_PARTIAL_MAX (64 * 1024)
+#define MUSTACH_ERROR_PARTIAL_TOO_BIG MUSTACH_ERROR_USER(3)
+
 /* Looks `name` up in the JSON data the way mustach-wrap itself does, by
  * rendering {{&name}} against the current context, so names resolve as they
  * always did: dots, JSON pointers, objiter keys. Returns 1 with the value in
@@ -457,6 +465,11 @@ static int partial_from_data(struct expl *e, const char *name, struct mustach_sb
     mustach_destroy_template(templ, NULL, NULL);
     if (rc != MUSTACH_OK) { free(out); return MUSTACH_ERROR_SYSTEM; }
     if (!outlen) { free(out); return 0; }
+    if (outlen > DATA_PARTIAL_MAX) {
+        free(out);
+        if ((copy = ngx_pnalloc(e->pool, strlen(name) + 1))) e->too_big = strcpy(copy, name);
+        return MUSTACH_ERROR_PARTIAL_TOO_BIG;
+    }
     if (!(copy = ngx_pnalloc(e->pool, outlen))) { free(out); return MUSTACH_ERROR_SYSTEM; }
     ngx_memcpy(copy, out, outlen);
     free(out);
@@ -619,12 +632,18 @@ int mustach_apply_jsmn(mustach_template_t *templ, const char *json, size_t jsonl
     e.nested = 0;
     e.flags = flags;
     e.partials = partials;
+    e.too_big = NULL;
     mustach_wrap_get_partial = get_partial;
     partial_expl = &e;
     struct output o = { .file = file, .left = max_output, .limited = max_output != 0 };
     rc = mustach_wrap_apply(templ, &mustach_jsmn_wrap_itf, &e, flags, write_output, NULL, &o);
     partial_expl = NULL;
     if (rc == MUSTACH_ERROR_OUTPUT_TOO_BIG) *err = "rendered output is larger than mustach_max_output_size";
+    if (rc == MUSTACH_ERROR_PARTIAL_TOO_BIG) {
+        char *msg = e.too_big ? ngx_pnalloc(pool, strlen(e.too_big) + sizeof("partial \"\" from the data is larger than 64k")) : NULL;
+        if (msg) *ngx_sprintf((u_char *) msg, "partial \"%s\" from the data is larger than 64k", e.too_big) = '\0';
+        *err = msg ? msg : "a partial from the data is larger than 64k";
+    }
     fclose(file);
     return rc;
 }

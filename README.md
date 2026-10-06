@@ -64,6 +64,7 @@ It can work two ways:
 - Lets partials (`{{> name}}`) be read from files in this directory: `path/name`, then `path/name.mustache`. A relative `path` is taken from the nginx prefix. `name` must be a single path component (no `/`, not `..`), so nothing outside the directory can be reached.
 - Partials always come from the JSON data too: by default the data is tried first, the directory second; without `partialdatafirst` in `mustach_flags`, the other way round. Without this directive, partials come from the data only and no file is ever read — note that a partial taken from the data is itself a template, so letting it name arbitrary files would let the JSON read them.
 - Files are read with blocking I/O on every render that uses them.
+- A partial taken from the data may be at most 64k: it is a template the JSON supplies, and a longer one is refused (500) rather than risk a tag name overflowing the worker's stack inside libmustach. Partials from files are not limited.
 - Inherited by nested locations unless overridden.
 
 ### mustach_template_cache
