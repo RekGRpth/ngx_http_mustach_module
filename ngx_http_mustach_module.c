@@ -13,6 +13,7 @@ int mustach_apply_jsmn(mustach_template_t *templ, const char *json, size_t jsonl
 
 typedef struct {
     ngx_chain_t *cl;
+    size_t size;    /* upstream JSON buffered so far */
     ngx_flag_t done;
 } ngx_http_mustach_context_t;
 
@@ -27,6 +28,7 @@ typedef struct {
     ngx_http_complex_value_t *template;
     ngx_uint_t flags;
     ngx_str_t partials;
+    size_t max_json_size;
     mustach_template_t *compiled; /* set when `template` is a constant, built once at config time */
 } ngx_http_mustach_location_t;
 
@@ -350,6 +352,12 @@ static ngx_command_t ngx_http_mustach_commands[] = {
     .conf = NGX_HTTP_LOC_CONF_OFFSET,
     .offset = offsetof(ngx_http_mustach_location_t, json),
     .post = NULL },
+  { .name = ngx_string("mustach_max_json_size"),
+    .type = NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_HTTP_LIF_CONF|NGX_CONF_TAKE1,
+    .set = ngx_conf_set_size_slot,
+    .conf = NGX_HTTP_LOC_CONF_OFFSET,
+    .offset = offsetof(ngx_http_mustach_location_t, max_json_size),
+    .post = NULL },
   { .name = ngx_string("mustach_partials_root"),
     .type = NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_HTTP_LIF_CONF|NGX_CONF_TAKE1,
     .set = ngx_http_mustach_partials_root_conf,
@@ -388,6 +396,7 @@ static void *ngx_http_mustach_create_loc_conf(ngx_conf_t *cf) {
     ngx_http_mustach_location_t *location = ngx_pcalloc(cf->pool, sizeof(*location));
     if (!location) return NULL;
     location->flags = NGX_CONF_UNSET_UINT;
+    location->max_json_size = NGX_CONF_UNSET_SIZE;
     return location;
 }
 
@@ -404,6 +413,7 @@ static char *ngx_http_mustach_merge_loc_conf(ngx_conf_t *cf, void *parent, void 
     if (conf->json && core->lmt_excpt && !core->handler) core->handler = ngx_http_mustach_handler;
     if (!conf->template) conf->template = prev->template;
     ngx_conf_merge_str_value(conf->partials, prev->partials, "");
+    ngx_conf_merge_size_value(conf->max_json_size, prev->max_json_size, 1024 * 1024);
     if (conf->json && !conf->template) { ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, "\"mustach_json\" requires \"mustach_template\", set here or inherited"); return NGX_CONF_ERROR; }
     ngx_conf_merge_uint_value(conf->flags, prev->flags, Mustach_With_AllExtensions);
     if (conf->template && conf->template->lengths == NULL && conf->template->value.len) {
@@ -428,6 +438,22 @@ static char *ngx_http_mustach_merge_loc_conf(ngx_conf_t *cf, void *parent, void 
     return NGX_CONF_OK;
 }
 
+/* The header filter held the header back, so it's not too late for a proper
+ * error response. `done` keeps the error page itself from being buffered and
+ * rendered as JSON. */
+static ngx_int_t ngx_http_mustach_filter_error(ngx_http_request_t *r, ngx_http_mustach_context_t *context) {
+    context->done = 1;
+    return ngx_http_filter_finalize_request(r, &ngx_http_mustach_module, NGX_HTTP_INTERNAL_SERVER_ERROR);
+}
+
+/* Like image_filter_buffer: the whole upstream JSON is held in memory, twice
+ * while it's being put together, so its size is capped. */
+static ngx_int_t ngx_http_mustach_too_large(ngx_http_request_t *r, ngx_http_mustach_context_t *context) {
+    ngx_http_mustach_location_t *location = ngx_http_get_module_loc_conf(r, ngx_http_mustach_module);
+    ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "mustach: upstream JSON is larger than mustach_max_json_size %uz", location->max_json_size);
+    return ngx_http_mustach_filter_error(r, context);
+}
+
 static ngx_int_t ngx_http_mustach_header_filter(ngx_http_request_t *r) {
     ngx_http_mustach_location_t *location = ngx_http_get_module_loc_conf(r, ngx_http_mustach_module);
     if (!location->template) return ngx_http_next_header_filter(r);
@@ -448,6 +474,7 @@ static ngx_int_t ngx_http_mustach_header_filter(ngx_http_request_t *r) {
     ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "%s", __func__);
     ngx_http_mustach_context_t *context = ngx_pcalloc(r->pool, sizeof(*context));
     if (!context) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!ngx_pcalloc"); return NGX_ERROR; }
+    if (location->max_json_size && r->headers_out.content_length_n > (off_t) location->max_json_size) return ngx_http_mustach_too_large(r, context);
     r->filter_need_in_memory = 1; /* have the copy filter read file buffers (sendfile, cache hits) into memory */
     ngx_http_set_ctx(r, context, ngx_http_mustach_module);
     return NGX_OK;
@@ -473,14 +500,6 @@ ret:
     return rc;
 }
 
-/* The header filter held the header back, so it's not too late for a proper
- * error response. `done` keeps the error page itself from being buffered and
- * rendered as JSON. */
-static ngx_int_t ngx_http_mustach_filter_error(ngx_http_request_t *r, ngx_http_mustach_context_t *context) {
-    context->done = 1;
-    return ngx_http_filter_finalize_request(r, &ngx_http_mustach_module, NGX_HTTP_INTERNAL_SERVER_ERROR);
-}
-
 static ngx_int_t ngx_http_mustach_body_filter(ngx_http_request_t *r, ngx_chain_t *in) {
     if (!in) return ngx_http_next_body_filter(r, in);
     ngx_http_mustach_context_t *context = ngx_http_get_module_ctx(r, ngx_http_mustach_module);
@@ -490,6 +509,8 @@ static ngx_int_t ngx_http_mustach_body_filter(ngx_http_request_t *r, ngx_chain_t
     ngx_chain_t *last;
     for (last = in; last->next; last = last->next);
     if (!last->buf->last_buf && !last->buf->last_in_chain) {
+        for (ngx_chain_t *cl = in; cl; cl = cl->next) if (ngx_buf_in_memory(cl->buf)) context->size += cl->buf->last - cl->buf->pos;
+        if (location->max_json_size && context->size > location->max_json_size) return ngx_http_mustach_too_large(r, context);
         if (ngx_chain_add_copy_buf(r->pool, &context->cl, in) != NGX_OK) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_chain_add_copy_buf != NGX_OK"); return ngx_http_mustach_filter_error(r, context); }
         return NGX_OK;
     }
@@ -514,6 +535,7 @@ static ngx_int_t ngx_http_mustach_body_filter(ngx_http_request_t *r, ngx_chain_t
         if (rc == NGX_ERROR || rc > NGX_OK || r->header_only) return rc;
         return ngx_http_next_body_filter(r, in);
     }
+    if (location->max_json_size && json.len > location->max_json_size) return ngx_http_mustach_too_large(r, context);
     if (!(json.data = ngx_pnalloc(r->pool, json.len))) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!ngx_pnalloc"); return ngx_http_mustach_filter_error(r, context); }
     u_char *p = json.data;
     size_t len;

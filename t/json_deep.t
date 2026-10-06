@@ -31,6 +31,7 @@ __DATA__
     }
     location /test {
         mustach_template "{{a}}";
+        mustach_max_json_size 4m;
         proxy_pass http://127.0.0.1:$server_port/data/deep.json;
         proxy_max_temp_file_size 0;
     }

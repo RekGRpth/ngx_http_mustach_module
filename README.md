@@ -40,6 +40,14 @@ It can work two ways:
 - Selects which [mustach extensions](https://gitlab.com/jobol/mustach) are active, as a space-separated list of: `allextensions`, `colon`, `compare`, `emptytag`, `equal`, `errorundefined`, `escfirstcmp`, `incpartial`, `jsonpointer`, `noextensions`, `objectiter`, `partialdatafirst`, `singledot`.
 - Can only be given once per location (a second `mustach_flags` in the same location is a configuration error); inherited by nested locations that don't set their own.
 
+### mustach_max_json_size
+
+- **syntax:** `mustach_max_json_size size;`
+- **default:** `1m`
+- **context:** `http`, `server`, `location`, `if in location`
+- In body-filter mode, the largest upstream JSON the module will hold in memory to render (like `image_filter_buffer`). A larger response gets a 500 — right away when its `Content-Length` says so, or as soon as it's grown past the limit otherwise. `0` lifts the limit.
+- Inherited by nested locations unless overridden.
+
 ### mustach_partials_root
 
 - **syntax:** `mustach_partials_root path;`
