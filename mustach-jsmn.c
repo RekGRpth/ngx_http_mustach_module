@@ -216,6 +216,13 @@ static int start(void *closure) {
     struct expl *e = closure;
     if (e->nested) return MUSTACH_OK;
     e->depth = 0;
+    /* the root frame: not an iteration -- get() walks the frames down to it
+     * looking for an objiter key, as for {{*}} outside {{#x.*}} */
+    e->stack[0].container = -1;
+    e->stack[0].is_objiter = 0;
+    e->stack[0].index = 0;
+    e->stack[0].count = 0;
+    e->stack[0].key = -1;
     e->stack[0].value = 0; /* token 0 is always the root */
     e->selection = 0;
     return MUSTACH_OK;
