@@ -98,7 +98,7 @@ In a location with `mustach_template` (and no `mustach_json`), a response is ren
 
 A rendered response gets a fresh `Content-Length`, a weakened `ETag`, no `Accept-Ranges`, and the `Content-Type` from `mustach_content` if set. A `HEAD` request gets the same headers as the corresponding `GET` would, without a `Content-Length` when the body never arrived (e.g. through a proxy). A `200` JSON response with an empty body passes through as is.
 
-Static files, `sendfile`, and responses served from `proxy_cache` are rendered like any other response. A response fetched in pieces by the `slice` module can't be: its later pieces arrive through subrequests, so the JSON never comes together in one place. Such a response passes through as it is, with a warning in the error log.
+Static files, `sendfile`, and responses served from `proxy_cache` are rendered like any other response. A response fetched by the `slice` module never is, even when it fits in one slice: its pieces arrive through subrequests, so the JSON doesn't come together in one place. Such a response passes through as it is, whatever its size, with a warning in the error log; other subrequests (SSI includes, `add_after_body`, ...) are rendered as usual.
 
 ## Errors and limits
 

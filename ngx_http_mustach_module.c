@@ -16,7 +16,6 @@ typedef struct {
     size_t len;
     size_t cap;
     ngx_flag_t done;
-    ngx_flag_t passthrough; /* sent as it is, subrequests carrying the rest included */
 } ngx_http_mustach_context_t;
 
 typedef struct {
@@ -500,11 +499,13 @@ static ngx_int_t ngx_http_mustach_header_filter(ngx_http_request_t *r) {
     ngx_http_mustach_location_t *location = ngx_http_get_module_loc_conf(r, ngx_http_mustach_module);
     if (!location->template) return ngx_http_next_header_filter(r);
     if (ngx_http_get_module_ctx(r, ngx_http_mustach_module)) return ngx_http_next_header_filter(r);
-    /* the rest of a response the main request passed through, in pieces
-     * fetched by subrequests (slice): each piece isn't JSON on its own */
-    if (r != r->main) {
-        ngx_http_mustach_context_t *main = ngx_http_get_module_ctx(r->main, ngx_http_mustach_module);
-        if (main && main->passthrough) return ngx_http_next_header_filter(r);
+    /* a response the slice module fetches in ranges -- it marks the main
+     * request and its own subrequests alike, before this filter runs: the
+     * pieces arrive in separate requests, so the JSON never comes together
+     * in one place to render (and its Content-Length is the whole file's) */
+    if (r->subrequest_ranges) {
+        if (r == r->main) ngx_log_error(NGX_LOG_WARN, r->connection->log, 0, "mustach: not rendering a response fetched by the slice module, sending it as it is");
+        return ngx_http_next_header_filter(r);
     }
     /* only a complete, successful body is page data: API errors pass through
      * as they are, and a 206 is a slice of JSON that can't be rendered */
@@ -560,7 +561,6 @@ static ngx_int_t ngx_http_mustach_append(ngx_http_request_t *r, ngx_http_mustach
  * buffered as it came, ending the way `last` did. */
 static ngx_int_t ngx_http_mustach_pass_through(ngx_http_request_t *r, ngx_http_mustach_context_t *context, ngx_buf_t *last) {
     context->done = 1;
-    context->passthrough = 1;
     ngx_int_t rc = ngx_http_next_header_filter(r);
     if (rc == NGX_ERROR || rc > NGX_OK || r->header_only) return rc;
     ngx_buf_t *b = ngx_calloc_buf(r->pool);
@@ -590,10 +590,11 @@ static ngx_int_t ngx_http_mustach_body_filter(ngx_http_request_t *r, ngx_chain_t
     if (rc != NGX_OK) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!ngx_pnalloc"); return ngx_http_mustach_filter_error(r, context); }
     if (!last->buf->last_buf && !last->buf->last_in_chain) return NGX_OK;
     /* the main request's body ends without last_buf only when the rest comes
-     * from subrequests -- the slice module: those never pass through this
-     * filter instance, so the JSON can't be had whole here */
+     * from subrequests, which never pass through this filter instance: the
+     * JSON can't be had whole here (slice is caught in the header filter,
+     * this is for anything else that does the same) */
     if (r == r->main && !last->buf->last_buf) {
-        ngx_log_error(NGX_LOG_WARN, r->connection->log, 0, "mustach: not rendering a response assembled from subrequests (slice?), sending it as it is");
+        ngx_log_error(NGX_LOG_WARN, r->connection->log, 0, "mustach: not rendering a response whose body continues in subrequests, sending it as it is");
         return ngx_http_mustach_pass_through(r, context, last->buf);
     }
     ngx_str_t json = {.len = context->len, .data = context->data};
