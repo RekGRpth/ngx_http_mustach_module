@@ -23,6 +23,7 @@ It can work two ways:
 - Sets the JSON data and switches the location into **content-handler mode**: this directive installs itself as the location's content handler, so the location no longer needs (or should have) another one like `proxy_pass` or `return`. Requires `mustach_template`, set in the same location or inherited — the module refuses to start otherwise, rather than crashing on the first request.
 - Combining `mustach_json` with another directive that already claims the location's content handler (`proxy_pass`, `return`, ...) is a configuration error, whichever of the two is declared second.
 - Like `proxy_pass`, not inherited by nested locations: each location that should render needs its own `mustach_json`. (Blocks such as `if` and `limit_except` inside the location do keep it.)
+- The request body is read before rendering (subject to `client_max_body_size`), so the data can come from it: `mustach_json $request_body;`. `$request_body` is empty once the body is written to a temporary file, so make `client_body_buffer_size` as large as the bodies you expect; the module logs a warning when the data comes out empty because of this.
 
 ### mustach_content
 

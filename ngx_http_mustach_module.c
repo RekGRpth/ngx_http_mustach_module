@@ -273,24 +273,41 @@ free:
     return b;
 }
 
-static ngx_int_t ngx_http_mustach_handler(ngx_http_request_t *r) {
-    ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "%s", __func__);
+static ngx_int_t ngx_http_mustach_render(ngx_http_request_t *r) {
     ngx_http_mustach_location_t *location = ngx_http_get_module_loc_conf(r, ngx_http_mustach_module);
-    if (!location->json) return NGX_DECLINED;
-    ngx_int_t rc = ngx_http_discard_request_body(r);
-    if (rc != NGX_OK && rc != NGX_AGAIN) return rc;
+    ngx_int_t rc;
     ngx_http_mustach_context_t *context = ngx_pcalloc(r->pool, sizeof(*context));
     if (!context) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!ngx_pcalloc"); return NGX_HTTP_INTERNAL_SERVER_ERROR; }
     context->done = 1; /* rendered right here: keep the filters off this response */
     ngx_http_set_ctx(r, context, ngx_http_mustach_module);
     ngx_str_t json;
     if (ngx_http_complex_value(r, location->json, &json) != NGX_OK) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_http_complex_value != NGX_OK"); return NGX_HTTP_INTERNAL_SERVER_ERROR; }
+    /* $request_body is empty once the body went to a temporary file: most
+     * likely why the data came out empty, so say it instead of quietly
+     * rendering against {} */
+    if (!json.len && r->request_body && r->request_body->temp_file) ngx_log_error(NGX_LOG_WARN, r->connection->log, 0, "mustach: empty \"mustach_json\" while the request body was buffered to a file, where $request_body can't see it: raise client_body_buffer_size");
     ngx_chain_t cl = {.buf = ngx_http_mustach_process(r, json), .next = NULL};
     if (!cl.buf) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!cl.buf"); return NGX_HTTP_INTERNAL_SERVER_ERROR; }
     r->headers_out.status = NGX_HTTP_OK;
     rc = ngx_http_send_header(r);
     if (rc == NGX_ERROR || rc > NGX_OK || r->header_only) return rc;
     return ngx_http_output_filter(r, &cl);
+}
+
+static void ngx_http_mustach_body_handler(ngx_http_request_t *r) {
+    ngx_http_finalize_request(r, ngx_http_mustach_render(r));
+}
+
+static ngx_int_t ngx_http_mustach_handler(ngx_http_request_t *r) {
+    ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "%s", __func__);
+    ngx_http_mustach_location_t *location = ngx_http_get_module_loc_conf(r, ngx_http_mustach_module);
+    if (!location->json) return NGX_DECLINED;
+    /* read the body rather than discard it: mustach_json may well be
+     * $request_body, which needs it in memory and in one piece */
+    r->request_body_in_single_buf = 1;
+    ngx_int_t rc = ngx_http_read_client_request_body(r, ngx_http_mustach_body_handler);
+    if (rc >= NGX_HTTP_SPECIAL_RESPONSE) return rc;
+    return NGX_DONE;
 }
 
 static char *ngx_http_set_complex_value_slot_enable(ngx_conf_t *cf, ngx_command_t *cmd, void *conf) {
