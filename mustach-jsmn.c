@@ -113,9 +113,11 @@ static int nth_element(struct expl *e, int container, int n) {
     return idx;
 }
 
+/* A number is zero when its mantissa has no non-zero digit: the exponent
+ * doesn't count (0e5 and 0.0e1 are zero, as is -0). */
 static int is_zero_number(const char *s, int len) {
     int i;
-    for (i = 0; i < len; i++)
+    for (i = 0; i < len && s[i] != 'e' && s[i] != 'E'; i++)
         if (s[i] >= '1' && s[i] <= '9')
             return 0;
     return 1;
