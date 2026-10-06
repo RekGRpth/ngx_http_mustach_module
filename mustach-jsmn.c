@@ -29,6 +29,8 @@ struct expl {
     const char *json;
     jsmntok_t *tokens;
     int *after;       /* after[i]: index of the token right after tokens[i]'s subtree */
+    int **index;      /* index[i]: member_index() of object tokens[i], built on first
+                       * lookup; NULL as a whole when no object is big enough */
     ngx_pool_t *pool;
     int selection;    /* token index, or -1 for "no value" */
     int depth;
@@ -52,8 +54,48 @@ static int skip(struct expl *e, int i) {
     return e->after[i];
 }
 
+/* Objects with more members than this get a hash index on their first
+ * lookup: below it, a linear scan is as fast and needs no memory. Without
+ * it, a loop over a big array looking up a name in a big enclosing object
+ * is quadratic -- 27s for one 840KB body. */
+#define MEMBER_INDEX_MIN 8
+
+static uint32_t key_hash(const char *s, size_t len) {
+    uint32_t h = 2166136261u; /* FNV-1a */
+    while (len--) { h ^= (u_char) *s++; h *= 16777619u; }
+    return h;
+}
+
+/* Open addressing over the object's key tokens, -1 for an empty slot.
+ * Keys compare by their raw JSON text, as tok_eq() does, and on duplicates
+ * the first one wins, as in the linear scan. */
+static int *member_index(struct expl *e, int container, unsigned *pmask) {
+    int n = e->tokens[container].size, i, key, *tab;
+    unsigned cap, h;
+    jsmntok_t *t;
+    for (cap = 16; cap < 2 * (unsigned) n; cap <<= 1);
+    *pmask = cap - 1;
+    if ((tab = e->index[container])) return tab;
+    if (!(tab = ngx_palloc(e->pool, cap * sizeof(*tab)))) return NULL;
+    ngx_memset(tab, 0xff, cap * sizeof(*tab));
+    for (i = 0, key = container + 1; i < n; i++, key = skip(e, key + 1)) {
+        t = &e->tokens[key];
+        for (h = key_hash(e->json + t->start, (size_t) tok_len(t)) & (cap - 1); tab[h] >= 0; h = (h + 1) & (cap - 1))
+            if (tok_eq(e, tab[h], e->json + t->start, (size_t) tok_len(t))) break;
+        if (tab[h] < 0) tab[h] = key;
+    }
+    e->index[container] = tab;
+    return tab;
+}
+
 static int find_member(struct expl *e, int container, const char *name, size_t namelen) {
-    int idx = container + 1, j, n = e->tokens[container].size;
+    int idx = container + 1, j, n = e->tokens[container].size, *tab;
+    unsigned mask, h;
+    if (n > MEMBER_INDEX_MIN && e->index && (tab = member_index(e, container, &mask))) {
+        for (h = key_hash(name, namelen) & mask; tab[h] >= 0; h = (h + 1) & mask)
+            if (tok_eq(e, tab[h], name, namelen)) return tab[h] + 1;
+        return -1;
+    }
     for (j = 0; j < n; j++) {
         int key = idx, value = key + 1;
         if (tok_eq(e, key, name, namelen)) return value;
@@ -489,11 +531,12 @@ static int get_partial(const char *name, struct mustach_sbuf *sbuf) {
  * the end of `tokens` on such input. Reject it up front: one linear pass in
  * document order with an explicit stack, no recursion. The same pass fills
  * in `after` for skip(). */
-static int index_tree(ngx_pool_t *pool, jsmntok_t *tokens, int ntok, int **pafter) {
+static int index_tree(ngx_pool_t *pool, jsmntok_t *tokens, int ntok, int **pafter, int *pbig) {
     struct { int tok, left; } *stack;
     int top = 0, i, *after;
     if (!(after = ngx_palloc(pool, (size_t) ntok * sizeof(*after)))) return MUSTACH_ERROR_SYSTEM;
     *pafter = after;
+    *pbig = tokens[0].type == JSMN_OBJECT && tokens[0].size > MEMBER_INDEX_MIN;
     if (!tokens[0].size) { after[0] = 1; return MUSTACH_OK; }
     if (!(stack = ngx_palloc(pool, (size_t) ntok * sizeof(*stack)))) return MUSTACH_ERROR_SYSTEM;
     stack[top].tok = 0;
@@ -503,6 +546,7 @@ static int index_tree(ngx_pool_t *pool, jsmntok_t *tokens, int ntok, int **pafte
         if (tokens[stack[top - 1].tok].type == JSMN_OBJECT && tokens[i].size != 1) return MUSTACH_ERROR_USER(1);
         stack[top - 1].left--;
         if (tokens[i].size) {
+            if (tokens[i].type == JSMN_OBJECT && tokens[i].size > MEMBER_INDEX_MIN) *pbig = 1;
             stack[top].tok = i;
             stack[top++].left = tokens[i].size;
         } else after[i] = i + 1;
@@ -531,7 +575,7 @@ int mustach_build_jsmn(const char *template, size_t length, int flags, mustach_t
 int mustach_apply_jsmn(mustach_template_t *templ, const char *json, size_t jsonlen, int flags, FILE *file, char **err, ngx_pool_t *pool, const ngx_str_t *partials) {
     jsmn_parser p;
     jsmntok_t *tokens;
-    int ntok, rc;
+    int ntok, rc, big;
     struct expl e;
 
     jsmn_init(&p);
@@ -544,11 +588,13 @@ int mustach_apply_jsmn(mustach_template_t *templ, const char *json, size_t jsonl
 
     jsmn_init(&p);
     if (jsmn_parse(&p, json, jsonlen, tokens, (unsigned) ntok) < 0) { *err = "invalid json"; fclose(file); return MUSTACH_ERROR_USER(1); }
-    if ((rc = index_tree(pool, tokens, ntok, &e.after)) != MUSTACH_OK) { if (rc != MUSTACH_ERROR_SYSTEM) *err = "invalid json"; fclose(file); return rc; }
+    if ((rc = index_tree(pool, tokens, ntok, &e.after, &big)) != MUSTACH_OK) { if (rc != MUSTACH_ERROR_SYSTEM) *err = "invalid json"; fclose(file); return rc; }
 
     e.json = json;
     e.tokens = tokens;
     e.pool = pool;
+    /* shared with partial lookups' copies of `e`; without it, a linear scan */
+    e.index = big ? ngx_pcalloc(pool, (size_t) ntok * sizeof(*e.index)) : NULL;
     e.nested = 0;
     e.flags = flags;
     e.partials = partials;
