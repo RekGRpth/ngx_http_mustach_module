@@ -12,8 +12,9 @@ int mustach_build_jsmn(const char *template, size_t length, int flags, mustach_t
 int mustach_apply_jsmn(mustach_template_t *templ, const char *json, size_t jsonlen, int flags, FILE *file, char **err, ngx_pool_t *pool, const ngx_str_t *partials, size_t max_output);
 
 typedef struct {
-    ngx_chain_t *cl;
-    size_t size;    /* upstream JSON buffered so far */
+    u_char *data;   /* upstream JSON buffered so far */
+    size_t len;
+    size_t cap;
     ngx_flag_t done;
 } ngx_http_mustach_context_t;
 
@@ -489,24 +490,30 @@ static ngx_int_t ngx_http_mustach_header_filter(ngx_http_request_t *r) {
     return NGX_OK;
 }
 
-static ngx_int_t ngx_chain_add_copy_buf(ngx_pool_t *pool, ngx_chain_t **chain, ngx_chain_t *in) {
-    ngx_chain_t *cl, **ll = chain;
-    ngx_int_t rc = NGX_ERROR;
-    for (cl = *chain; cl; cl = cl->next) ll = &cl->next;
-    while (in) {
-        size_t size = in->buf->last - in->buf->pos;
-        if (!(cl = ngx_alloc_chain_link(pool))) goto ret;
-        if (!(cl->buf = ngx_create_temp_buf(pool, size))) goto ret;
-        cl->buf->last = ngx_cpymem(cl->buf->pos, in->buf->pos, size);
-        in->buf->pos = in->buf->last;
-        *ll = cl;
-        ll = &cl->next;
-        in = in->next;
+/* Appends the in-memory data of `in` to the JSON buffered so far, in one
+ * buffer grown by doubling: a body arriving in many small pieces costs no
+ * more than one arriving whole, and what's held stays within twice the
+ * data. NGX_DECLINED when that would take it past mustach_max_json_size. */
+static ngx_int_t ngx_http_mustach_append(ngx_http_request_t *r, ngx_http_mustach_context_t *context, ngx_chain_t *in, size_t max) {
+    for (ngx_chain_t *cl = in; cl; cl = cl->next) {
+        if (!ngx_buf_in_memory(cl->buf)) continue;
+        size_t n = cl->buf->last - cl->buf->pos;
+        if (!n) continue;
+        if (max && n > max - context->len) return NGX_DECLINED;
+        if (n > context->cap - context->len) {
+            size_t cap = context->cap ? context->cap : 4096;
+            while (cap - context->len < n) cap *= 2;
+            u_char *data = ngx_pnalloc(r->pool, cap);
+            if (!data) return NGX_ERROR;
+            if (context->len) ngx_memcpy(data, context->data, context->len);
+            context->data = data;
+            context->cap = cap;
+        }
+        ngx_memcpy(context->data + context->len, cl->buf->pos, n);
+        context->len += n;
+        cl->buf->pos = cl->buf->last;
     }
-    rc = NGX_OK;
-ret:
-    *ll = NULL;
-    return rc;
+    return NGX_OK;
 }
 
 static ngx_int_t ngx_http_mustach_body_filter(ngx_http_request_t *r, ngx_chain_t *in) {
@@ -517,23 +524,11 @@ static ngx_int_t ngx_http_mustach_body_filter(ngx_http_request_t *r, ngx_chain_t
     ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "%s", __func__);
     ngx_chain_t *last;
     for (last = in; last->next; last = last->next);
-    if (!last->buf->last_buf && !last->buf->last_in_chain) {
-        for (ngx_chain_t *cl = in; cl; cl = cl->next) if (ngx_buf_in_memory(cl->buf)) context->size += cl->buf->last - cl->buf->pos;
-        if (location->max_json_size && context->size > location->max_json_size) return ngx_http_mustach_too_large(r, context);
-        if (ngx_chain_add_copy_buf(r->pool, &context->cl, in) != NGX_OK) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_chain_add_copy_buf != NGX_OK"); return ngx_http_mustach_filter_error(r, context); }
-        return NGX_OK;
-    }
-    if (context->cl) {
-        ngx_chain_t *tail;
-        for (tail = context->cl; tail->next; tail = tail->next);
-        tail->next = in;
-    }
-    ngx_str_t json = ngx_null_string;
-    for (ngx_chain_t *cl = context->cl ? context->cl : in; cl; cl = cl->next) {
-        if (!ngx_buf_in_memory(cl->buf)) continue;
-        json.len += cl->buf->last - cl->buf->pos;
-    }
-    ngx_int_t rc;
+    ngx_int_t rc = ngx_http_mustach_append(r, context, in, location->max_json_size);
+    if (rc == NGX_DECLINED) return ngx_http_mustach_too_large(r, context);
+    if (rc != NGX_OK) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!ngx_pnalloc"); return ngx_http_mustach_filter_error(r, context); }
+    if (!last->buf->last_buf && !last->buf->last_in_chain) return NGX_OK;
+    ngx_str_t json = {.len = context->len, .data = context->data};
     if (!json.len) {
         /* nothing to render (HEAD through a proxy, an empty or 304 response):
          * still send the header held back by the header filter; HEAD gets the
@@ -543,15 +538,6 @@ static ngx_int_t ngx_http_mustach_body_filter(ngx_http_request_t *r, ngx_chain_t
         rc = ngx_http_next_header_filter(r);
         if (rc == NGX_ERROR || rc > NGX_OK || r->header_only) return rc;
         return ngx_http_next_body_filter(r, in);
-    }
-    if (location->max_json_size && json.len > location->max_json_size) return ngx_http_mustach_too_large(r, context);
-    if (!(json.data = ngx_pnalloc(r->pool, json.len))) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!ngx_pnalloc"); return ngx_http_mustach_filter_error(r, context); }
-    u_char *p = json.data;
-    size_t len;
-    for (ngx_chain_t *cl = context->cl ? context->cl : in; cl; cl = cl->next) {
-        if (!ngx_buf_in_memory(cl->buf)) continue;
-        if (!(len = cl->buf->last - cl->buf->pos)) continue;
-        p = ngx_copy(p, cl->buf->pos, len);
     }
     ngx_chain_t cl = {.buf = ngx_http_mustach_process(r, json), .next = NULL};
     if (!cl.buf) return ngx_http_mustach_filter_error(r, context);
