@@ -231,6 +231,10 @@ static ngx_int_t ngx_http_mustach_set_headers(ngx_http_request_t *r, ngx_http_mu
     if (location->content && ngx_http_complex_value(r, location->content, &r->headers_out.content_type) != NGX_OK) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_http_complex_value != NGX_OK"); return NGX_ERROR; }
     if (ngx_http_set_content_type(r) != NGX_OK) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_http_set_content_type != NGX_OK"); return NGX_ERROR; }
     r->headers_out.content_type_len = r->headers_out.content_type.len;
+    /* the lowercased copy that ngx_http_test_content_type() caches (for
+     * gzip_types, sub_filter_types, ...) may be of the old type: drop it, as
+     * every nginx module that changes the type does */
+    r->headers_out.content_type_lowcase = NULL;
     return NGX_OK;
 }
 
