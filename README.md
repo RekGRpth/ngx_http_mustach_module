@@ -41,7 +41,8 @@ Both modes also work inside subrequests, e.g. an SSI `<!--# include virtual="...
 - **syntax:** `mustach_data_partials_limit size;`
 - **default:** `1m`
 - **context:** `http`, `server`, `location`, `if in location`
-- A per-render budget for partials taken from the JSON data. Each such partial lookup is charged its length, and at least 64 bytes; once the budget runs out, rendering stops and the request gets a 500. A partial from the data is a template the JSON supplies, and it costs work and memory even when it outputs nothing, so this bounds what the data can make a render do. `0` lifts the limit. Partials from files and the template itself aren't charged.
+- A per-render budget for partial lookups in the JSON data. Every `{{> name}}` that looks in the data is charged 64 bytes — whether or not the name is found there, and so also when the partial then comes from a file under `mustach_partials_root` (by default the data is looked at first) — and a partial found in the data is charged its length when that is more. Once the budget runs out, rendering stops and the request gets a 500. A partial from the data is a template the JSON supplies, and lookups cost work and memory even when they output nothing, so this bounds what the data can make a render do. `0` lifts the limit. The contents of partials from files, and the template itself, aren't charged.
+- So a page that uses a partial per item of a list needs at least 64 bytes of budget per item: the default `1m` covers about 16,000.
 - Inherited by nested locations unless overridden.
 
 ### mustach_flags
@@ -158,6 +159,7 @@ location /list {
     mustach_template      '<ul>{{#items}}{{> item}}{{/items}}</ul>';
     mustach_content       text/html;
     mustach_partials_root /etc/nginx/mustache;   # item, or item.mustache, from here
+    # each {{> item}} also costs 64 bytes of mustach_data_partials_limit (1m: ~16,000 items)
     proxy_pass            http://backend;
 }
 ```
