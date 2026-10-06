@@ -112,6 +112,10 @@ static void ngx_http_mustach_log_error(ngx_http_request_t *r, int rc, const char
  * own open_file_cache makes. Bounded by an LRU so an attacker-controlled
  * variable can't grow it without limit. */
 #define NGX_HTTP_MUSTACH_CACHE_BUCKETS 61
+/* The LRU bounds the number of entries, this their size: a bigger template
+ * (a client-influenced variable could make one) is compiled per request
+ * instead, so the cache stays within entries x this per worker. */
+#define NGX_HTTP_MUSTACH_CACHE_MAX_TEMPLATE (64 * 1024)
 
 typedef struct ngx_http_mustach_cache_entry_s ngx_http_mustach_cache_entry_t;
 
@@ -163,10 +167,11 @@ static ngx_int_t ngx_http_mustach_cache_get(ngx_http_request_t *r, ngx_str_t tex
     mustach_template_t *compiled;
     u_char *data;
 
-    /* mustach_template_cache 0: no caching, compile per request and free the
-     * template with the request pool -- `text` lives in that same pool, so it
-     * outlives the compiled template that points into it. */
-    if (!main->cache_size) {
+    /* mustach_template_cache 0, or a template too big to keep: no caching,
+     * compile per request and free the template with the request pool --
+     * `text` lives in that same pool, so it outlives the compiled template
+     * that points into it. */
+    if (!main->cache_size || text.len > NGX_HTTP_MUSTACH_CACHE_MAX_TEMPLATE) {
         ngx_pool_cleanup_t *cln;
         if (!(cln = ngx_pool_cleanup_add(r->pool, 0))) return NGX_ERROR;
         if ((rc = mustach_build_jsmn((const char *)text.data, text.len, flags, &compiled, &err)) != MUSTACH_OK) { ngx_http_mustach_log_error(r, rc, err); return NGX_ERROR; }
