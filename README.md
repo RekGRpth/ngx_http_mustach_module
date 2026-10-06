@@ -24,7 +24,7 @@ Both modes also work inside subrequests, e.g. an SSI `<!--# include virtual="...
 - **syntax:** `mustach_json <text>;`
 - **context:** `location`, `if in location`
 - Sets the JSON data and switches the location into **content-handler mode**: this directive installs itself as the location's content handler. Requires `mustach_template`, set in the same location or inherited — the module refuses to start otherwise, rather than crashing on the first request.
-- Don't combine it with another content handler such as `proxy_pass`. nginx reports the conflict only when `mustach_json` comes second; when the other directive comes second, it silently takes over and `mustach_json` is ignored. `return` runs before any content handler, so in a location with both, `return` answers (and its response is then rendered in body-filter mode if it's JSON).
+- Combining it with another content handler such as `proxy_pass` or `fastcgi_pass` is a configuration error, whichever of the two comes first. `return` isn't a content handler — it runs earlier, in the rewrite phase — so it isn't caught: in a location with both, `return` answers (and its response is then rendered in body-filter mode if it's JSON).
 - Like `proxy_pass`, not inherited by nested locations: each location that should render needs its own `mustach_json`. (Blocks such as `if` and `limit_except` inside the location do keep it.)
 - The request body is read before rendering (subject to `client_max_body_size`), so the data can come from it: `mustach_json $request_body;`. `$request_body` is empty once the body is written to a temporary file, so make `client_body_buffer_size` as large as the bodies you expect; the module logs a warning when the data comes out empty because of this.
 - The response is always a `200`.

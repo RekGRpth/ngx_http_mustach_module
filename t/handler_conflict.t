@@ -5,12 +5,14 @@
 # location. It used to install ngx_http_mustach_handler only if
 # core->handler was still unset, so a location combining mustach_json with
 # e.g. proxy_pass would keep the OTHER handler with no warning at all,
-# leaving mustach_json's value completely unused.
+# leaving mustach_json's value completely unused. The reverse order --
+# mustach_json first, then proxy_pass overwriting the handler -- went just as
+# silently until merge time started checking for it too.
 
 use lib 'lib';
 use Test::Nginx::Socket;
 
-plan tests => repeat_each() * 4;
+plan tests => repeat_each() * 6;
 
 no_shuffle();
 run_tests();
@@ -31,7 +33,21 @@ __DATA__
 --- error_log
 "mustach_json" directive conflicts with another content handler already set for this location
 
-=== TEST 2: mustach_json alone still starts fine
+=== TEST 2: mustach_json before proxy_pass fails to start too
+--- main_config
+    load_module /etc/nginx/modules/ngx_http_mustach_module.so;
+--- config
+    location /test {
+        mustach_template "{{a}}";
+        mustach_json '{"a":"b"}';
+        proxy_pass http://127.0.0.1:1;
+    }
+--- must_die
+--- suppress_stderr
+--- error_log
+"mustach_json" conflicts with another content handler set in this location
+
+=== TEST 3: mustach_json alone still starts fine
 --- main_config
     load_module /etc/nginx/modules/ngx_http_mustach_module.so;
 --- config

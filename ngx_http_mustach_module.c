@@ -417,6 +417,10 @@ static char *ngx_http_mustach_merge_loc_conf(ngx_conf_t *cf, void *parent, void 
      * only by the unnamed ones (if, limit_except) where the enclosing
      * location's handler keeps running with their configuration */
     ngx_http_core_loc_conf_t *core = ngx_http_conf_get_module_loc_conf(cf, ngx_http_core_module);
+    /* mustach_json given first and proxy_pass & co. second: the other directive
+     * overwrote the handler without a word, which the directive's own check
+     * can't see coming -- catch it here, once the whole location is read */
+    if (conf->json && core->handler != ngx_http_mustach_handler) { ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, "\"mustach_json\" conflicts with another content handler set in this location"); return NGX_CONF_ERROR; }
     if (!conf->json && core->noname) conf->json = prev->json;
     /* limit_except, unlike if, takes the content handler from its own conf */
     if (conf->json && core->lmt_excpt && !core->handler) core->handler = ngx_http_mustach_handler;
