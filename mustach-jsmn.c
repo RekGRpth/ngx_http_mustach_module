@@ -438,10 +438,6 @@ static const struct mustach_wrap_itf mustach_jsmn_wrap_itf = {
     .get = get
 };
 
-/* The render in progress, for get_partial(): mustach_wrap_get_partial is a
- * global hook and gets no closure. Workers render one request at a time. */
-static struct expl *partial_expl;
-
 /* A partial from the data is a template the JSON supplies, and libmustach
  * copies each tag name it looks up into a stack buffer of that name's size:
  * a multi-megabyte name overflows the worker's stack. Its tag names can't be
