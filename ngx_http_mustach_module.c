@@ -230,6 +230,12 @@ static ngx_int_t ngx_http_mustach_cache_get(ngx_http_request_t *r, ngx_str_t tex
     return NGX_OK;
 }
 
+/* No template at all, or `mustach_template "";`, which turns an inherited one
+ * off: nothing to render in this location. */
+static ngx_flag_t ngx_http_mustach_template_off(ngx_http_mustach_location_t *location) {
+    return !location->template || (!location->template->lengths && !location->template->value.len);
+}
+
 static ngx_int_t ngx_http_mustach_set_headers(ngx_http_request_t *r, ngx_http_mustach_location_t *location) {
     ngx_http_clear_accept_ranges(r);
     ngx_http_clear_content_length(r);
@@ -263,7 +269,7 @@ static ngx_buf_t *ngx_http_mustach_process(ngx_http_request_t *r, ngx_str_t json
     } else {
         ngx_str_t template;
         if (ngx_http_complex_value(r, location->template, &template) != NGX_OK) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_http_complex_value != NGX_OK"); return NULL; }
-        if (!template.len) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!template.len"); return NULL; }
+        if (!template.len) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "mustach: empty mustach_template"); return NULL; }
         if (ngx_http_mustach_cache_get(r, template, location->flags, &templ) != NGX_OK) return NULL;
     }
     ngx_str_t output = ngx_null_string;
@@ -455,7 +461,7 @@ static char *ngx_http_mustach_merge_loc_conf(ngx_conf_t *cf, void *parent, void 
     ngx_conf_merge_size_value(conf->max_json_size, prev->max_json_size, 1024 * 1024);
     ngx_conf_merge_size_value(conf->max_output_size, prev->max_output_size, 10 * 1024 * 1024);
     ngx_conf_merge_size_value(conf->data_partials_limit, prev->data_partials_limit, 1024 * 1024);
-    if (conf->json && !conf->template) { ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, "\"mustach_json\" requires \"mustach_template\", set here or inherited"); return NGX_CONF_ERROR; }
+    if (conf->json && ngx_http_mustach_template_off(conf)) { ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, "\"mustach_json\" requires \"mustach_template\", set here or inherited"); return NGX_CONF_ERROR; }
     ngx_conf_merge_uint_value(conf->flags, prev->flags, Mustach_With_AllExtensions);
     if (conf->template && conf->template->lengths == NULL && conf->template->value.len) {
         /* an inherited template with the same build-time flags: share the
@@ -497,7 +503,7 @@ static ngx_int_t ngx_http_mustach_too_large(ngx_http_request_t *r, ngx_http_must
 
 static ngx_int_t ngx_http_mustach_header_filter(ngx_http_request_t *r) {
     ngx_http_mustach_location_t *location = ngx_http_get_module_loc_conf(r, ngx_http_mustach_module);
-    if (!location->template) return ngx_http_next_header_filter(r);
+    if (ngx_http_mustach_template_off(location)) return ngx_http_next_header_filter(r);
     if (ngx_http_get_module_ctx(r, ngx_http_mustach_module)) return ngx_http_next_header_filter(r);
     /* a response the slice module fetches in ranges -- it marks the main
      * request and its own subrequests alike, before this filter runs: the
@@ -520,6 +526,13 @@ static ngx_int_t ngx_http_mustach_header_filter(ngx_http_request_t *r) {
     size_t len = sizeof("application/json") - 1;
     u_char *p = r->headers_out.content_type.data;
     if (!(r->headers_out.content_type.len >= len && !ngx_strncasecmp(p, (u_char *)"application/json", len) && (r->headers_out.content_type.len == len || p[len] == ';' || p[len] == ' '))) return ngx_http_next_header_filter(r);
+    /* a template from a variable that comes out empty: this response isn't
+     * to be rendered (a map can switch rendering per request) */
+    if (location->template->lengths) {
+        ngx_str_t template;
+        if (ngx_http_complex_value(r, location->template, &template) != NGX_OK) return NGX_ERROR;
+        if (!template.len) return ngx_http_next_header_filter(r);
+    }
     ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "%s", __func__);
     ngx_http_mustach_context_t *context = ngx_pcalloc(r->pool, sizeof(*context));
     if (!context) { ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "!ngx_pcalloc"); return NGX_ERROR; }

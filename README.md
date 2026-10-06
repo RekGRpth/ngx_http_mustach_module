@@ -16,6 +16,13 @@ Both modes also work inside subrequests, e.g. an SSI `<!--# include virtual="...
 - **syntax:** `mustach_template <text>;`
 - **context:** `http`, `server`, `location`, `if in location`
 - Sets the Mustache template. Required for both modes — it's what actually turns the module on (installing the body filter for the whole `http` block once any location uses it). The value is an [nginx complex value](https://nginx.org/en/docs/dev/development_guide.html#http_variables) and can reference variables, e.g. `mustach_template $tmpl;`.
+- `mustach_template "";` turns rendering off in a location, e.g. in a nested location that would otherwise inherit a template: responses there pass through untouched. A template from a variable that comes out empty does the same for that response in body-filter mode, so a `map` can switch rendering per request:
+
+  ```nginx
+  map $arg_raw $page_tmpl { 1 ""; default "<h1>{{title}}</h1>"; }
+  ```
+
+  In content-handler mode there is no response to fall back to: an empty template there gives a 500 (and `mustach_json` next to `mustach_template "";` is a configuration error).
 - A literal template is compiled once, at configuration load: a syntax error in it stops nginx from starting (or a reload from being applied). A template taken from a variable is compiled when used, and kept in a per-worker cache (see `mustach_template_cache`).
 - Inherited by nested locations unless overridden.
 

@@ -21,14 +21,15 @@ __DATA__
     load_module /etc/nginx/modules/ngx_http_mustach_module.so;
 --- config
     location /test {
-        mustach_template "";
+        set $t "";
+        mustach_template $t;
         mustach_json '{"a":"b"}';
     }
 --- request
     GET /test
 --- error_code: 500
 --- error_log
-!template.len
+mustach: empty mustach_template
 
 === TEST 2: undefined tag is a request error under errorundefined
 --- main_config
