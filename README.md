@@ -91,6 +91,19 @@ location /api/ {
 
 Whatever `backend` returns is only rewritten if it comes back as `200` with `application/json` (optionally followed by `;` or a space, e.g. `application/json; charset=utf-8`) — any other `Content-Type`, and any other status (API errors, a `206` to a `Range` request, ...), passes through untouched.
 
+So does a compressed response (`Content-Encoding: gzip`, ...): the module can't parse it, and logs a warning instead. `proxy_pass` forwards the client's `Accept-Encoding`, so a backend that compresses JSON will do so for any browser — have it send the data uncompressed:
+
+```nginx
+location /api/ {
+    mustach_template  '<h1>{{title}}</h1>';
+    mustach_content   text/html;
+    proxy_set_header  Accept-Encoding "";
+    proxy_pass        http://backend;
+}
+```
+
+The rendered page itself can still be compressed on the way out with `gzip on;`.
+
 ## Building
 
 Add it with `--add-module=path/to/ngx_http_mustach_module` (static) or `--add-dynamic-module=path/to/ngx_http_mustach_module` (dynamic) to nginx's `configure`.

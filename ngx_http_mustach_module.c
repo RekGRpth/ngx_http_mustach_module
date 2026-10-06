@@ -418,6 +418,13 @@ static ngx_int_t ngx_http_mustach_header_filter(ngx_http_request_t *r) {
     /* only a complete, successful body is page data: API errors pass through
      * as they are, and a 206 is a slice of JSON that can't be rendered */
     if (r->headers_out.status != NGX_HTTP_OK) return ngx_http_next_header_filter(r);
+    /* a compressed body can't be parsed here (gunzip runs after this filter):
+     * pass it through and say why, rather than fail it as invalid JSON */
+    ngx_table_elt_t *ce = r->headers_out.content_encoding;
+    if (ce && ce->value.len && !(ce->value.len == sizeof("identity") - 1 && !ngx_strncasecmp(ce->value.data, (u_char *) "identity", ce->value.len))) {
+        ngx_log_error(NGX_LOG_WARN, r->connection->log, 0, "mustach: not rendering a \"%V\"-encoded response, have the upstream send it uncompressed (proxy_set_header Accept-Encoding \"\")", &ce->value);
+        return ngx_http_next_header_filter(r);
+    }
     size_t len = sizeof("application/json") - 1;
     u_char *p = r->headers_out.content_type.data;
     if (!(r->headers_out.content_type.len >= len && !ngx_strncasecmp(p, (u_char *)"application/json", len) && (r->headers_out.content_type.len == len || p[len] == ';' || p[len] == ' '))) return ngx_http_next_header_filter(r);
